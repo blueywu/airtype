@@ -1,5 +1,47 @@
 # vRemoter
 
+## Local-only branch
+
+`codex/local-only` is based on `ccc333cn-edition` at
+`f3e310f73361b81cc67280a47a2435b8069ddf08`.
+
+- Removes automatic/manual update checks and installer downloads.
+- Removes TelemetryDeck, its Swift package dependency, and all analytics calls.
+- Removes the remote-store configuration, purchase UI, and commerce assets.
+- Keeps the fork's four remote/input-method fixes and the existing audio driver integration.
+- The application has no remaining HTTP client or remote image loading code. Bluetooth is still required for the remote.
+- Existing local donation images remain; they do not make network requests.
+
+Build with `./package-app.sh`; protocol tests use `./run-self-tests.sh`.
+Voice-session tests use `swift run vRemote --voice-session-self-test` in a debug build
+(or run `.build/debug/vRemote --voice-session-self-test` after `swift build`).
+Building the application does not install its HAL audio plug-in. The plug-in,
+hardware permissions, a supported remote, and a compatible input method are
+required for end-to-end voice input. Typeless integration is not added by this branch.
+
+On this machine, the macOS 27 Command Line Tools SDK lacks the SwiftUI macro
+plug-in required by its `@State` implementation. The existing macOS 26.5 SDK
+works; `package-app.sh` forwards additional arguments to SwiftPM:
+
+```sh
+./package-app.sh --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk --build-system native
+```
+
+Validation on 2026-11-04: Debug and Release builds passed; all three protocol
+regressions and 43 voice-session assertions passed. The signed local app showed
+its main window and remained running for 15 seconds under a network-denying
+sandbox, with no Internet sockets in four samples, then exited normally.
+Default audio output IDs were unchanged. Source and bundle scans found no
+remaining telemetry, update/commerce client, remote images, or external Swift
+dependencies. The app uses an ad-hoc signature, not Developer ID notarization.
+The HAL driver was not installed, the remote was not connected, and
+Accessibility/Input Monitoring permissions were absent; voice capture, key
+mapping, Typeless, HomePod, and Bluetooth audio device interoperability remain
+unverified.
+
+The sections below describe the upstream project and its original distribution;
+their update/commerce instructions do not apply to this local-only branch.
+
 > 本仓库保存 vRemoter 的源码、设计源稿、构建脚本与测试。普通用户请通过 `vincentstudio.org` 系列域名访问官网、下载与更新服务。
 
 [官方网站](https://vremoter.vincentstudio.org/) · [下载最新版](https://updates.vincentstudio.org/vremoter/) · [v1.1.1 Release](https://github.com/VincentKingHsu/vRemoter/releases/tag/v1.1.1)

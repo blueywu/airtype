@@ -216,14 +216,12 @@ private enum ConsoleModal: Identifiable {
     case permission(PermissionKind)
     case donationPrompt
     case donation
-    case purchase
 
     var id: String {
         switch self {
         case .permission(let kind): "permission-\(kind.id)"
         case .donationPrompt: "donation-prompt"
         case .donation: "donation"
-        case .purchase: "purchase"
         }
     }
 }
@@ -406,12 +404,6 @@ private final class ConsoleViewModel: ObservableObject {
         activeModal = .donation
     }
 
-    func showPurchase() {
-        CommerceConfigModel.shared.refresh()
-        AppAnalytics.signal("Commerce.opened")
-        activeModal = .purchase
-    }
-
     func showDonationFromPrompt() {
         DonationPromptSchedule.markHandled()
         activeModal = nil
@@ -584,11 +576,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         show()
     }
 
-    func showPurchase() {
-        model.showPurchase()
-        show()
-    }
-
     func windowWillClose(_ notification: Notification) {
         permissionTimer?.invalidate()
         permissionTimer = nil
@@ -607,7 +594,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
 
 private struct StudioMixerView: View {
     @ObservedObject var model: ConsoleViewModel
-    @ObservedObject private var commerce = CommerceConfigModel.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -648,12 +634,7 @@ private struct StudioMixerView: View {
                 )
             case .donation:
                 DonationView()
-            case .purchase:
-                PurchaseView(model: .shared)
             }
-        }
-        .onAppear {
-            commerce.refresh()
         }
     }
 
@@ -752,9 +733,7 @@ private struct StudioMixerView: View {
                 db: model.remoteLevelDB,
                 enabled: model.remoteInputEnabled,
                 solo: model.remoteSolo,
-                purchaseLink: !commerce.config.availableStores.isEmpty,
                 showTestHint: model.showX6MicHint && model.hidConnected && model.bleConnected,
-                onPurchase: model.showPurchase,
                 onMute: model.toggleRemoteMute,
                 onSolo: model.toggleRemoteSolo
             )
@@ -1393,9 +1372,7 @@ private struct InputChannelView: View {
     let db: Double
     let enabled: Bool
     let solo: Bool
-    var purchaseLink = false
     var showTestHint = false
-    var onPurchase: (() -> Void)?
     let onMute: () -> Void
     let onSolo: () -> Void
 
@@ -1480,13 +1457,6 @@ private struct InputChannelView: View {
                         : L10n.text("参与混合", "In mix"))
                     : L10n.text("不参与混合", "Not in mix"))
                 Spacer()
-                if purchaseLink {
-                    Button(L10n.text("购买遥控器 ↗", "Buy remote ↗")) {
-                        onPurchase?()
-                    }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(ConsoleTheme.green)
-                }
             }
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(enabled ? ConsoleTheme.secondary : ConsoleTheme.tertiary)
@@ -1618,193 +1588,6 @@ private struct MeterView: View {
     private var activeCount: Int {
         guard db > -100 else { return 0 }
         return min(count, max(0, Int(((db + 60) / 60) * Double(count))))
-    }
-}
-
-private struct PurchaseView: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var model: CommerceConfigModel
-    @State private var selectedStoreID = ""
-
-    private var stores: [CommerceStore] { model.config.availableStores }
-    private var selectedStore: CommerceStore? {
-        stores.first(where: { $0.id == selectedStoreID }) ?? stores.first
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ZStack {
-                let heroName = AppLanguage.selected.usesEnglish
-                    ? "x6-vibe-coding-hero-en.png"
-                    : "x6-vibe-coding-hero-v2.png"
-                if let image = CommerceAsset.image(named: heroName) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                } else {
-                    ConsoleTheme.surface
-                }
-            }
-            .frame(height: 403)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(ConsoleTheme.line))
-
-            if stores.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "cart")
-                        .font(.system(size: 32))
-                    Text(L10n.text("购买链接暂不可用", "Purchase links are temporarily unavailable"))
-                }
-                .foregroundStyle(ConsoleTheme.secondary)
-                .frame(maxWidth: .infinity, minHeight: 210)
-            } else {
-                HStack(spacing: 8) {
-                    ForEach(stores) { store in
-                        Button {
-                            selectedStoreID = store.id
-                        } label: {
-                            Text(store.title)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(
-                                    selectedStore?.id == store.id
-                                        ? Color.white
-                                        : store.brandColor
-                                )
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 38)
-                                .background(
-                                    selectedStore?.id == store.id
-                                        ? store.brandColor
-                                        : ConsoleTheme.surface
-                                )
-                                .clipShape(RoundedRectangle(cornerRadius: 7))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 7)
-                                        .stroke(
-                                            selectedStore?.id == store.id
-                                                ? store.brandColor
-                                                : store.brandColor.opacity(0.65)
-                                        )
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                if let store = selectedStore {
-                    HStack(spacing: 20) {
-                        PurchaseQRCode(store: store)
-                            .frame(width: 180, height: 180)
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(store.title)
-                                .font(.system(size: 21, weight: .semibold))
-                            Text(L10n.text(
-                                "电脑上可直接打开；手机购买请扫描左侧二维码。",
-                                "Open the store on this Mac, or scan the QR code on your phone."
-                            ))
-                                .font(.system(size: 12))
-                                .foregroundStyle(ConsoleTheme.secondary)
-                                .lineSpacing(3)
-                            Spacer()
-                            HStack(spacing: 10) {
-                                Button(L10n.text("复制链接", "Copy Link")) {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(store.url, forType: .string)
-                                    AppAnalytics.signal("Commerce.linkCopied", parameters: ["store": store.id])
-                                }
-                                .buttonStyle(ConsoleButtonStyle(tone: .neutral))
-                                Button {
-                                    guard let url = store.purchaseURL else { return }
-                                    AppAnalytics.signal("Commerce.storeOpened", parameters: ["store": store.id])
-                                    NSWorkspace.shared.open(url)
-                                } label: {
-                                    Text(L10n.text("立即打开", "Open Store"))
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(Color.white)
-                                        .padding(.horizontal, 14)
-                                        .frame(height: 34)
-                                        .background(store.brandColor)
-                                        .clipShape(RoundedRectangle(cornerRadius: 7))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
-                    }
-                }
-            }
-
-            HStack {
-                Spacer()
-                Button(L10n.text("完成", "Done")) { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(ConsoleButtonStyle(tone: .neutral))
-            }
-        }
-        .padding(22)
-        .frame(width: 760, height: 720)
-        .background(ConsoleTheme.panel)
-        .foregroundStyle(ConsoleTheme.text)
-        .onAppear {
-            if selectedStoreID.isEmpty { selectedStoreID = stores.first?.id ?? "" }
-            model.refresh()
-        }
-        .onChange(of: model.config) { _ in
-            guard stores.contains(where: { $0.id == selectedStoreID }) else {
-                selectedStoreID = stores.first?.id ?? ""
-                return
-            }
-        }
-    }
-}
-
-private struct PurchaseQRCode: View {
-    let store: CommerceStore
-
-    var body: some View {
-        ZStack {
-            Color.white
-            if let url = store.remoteQRCodeURL {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().interpolation(.none).scaledToFit().padding(10)
-                    default:
-                        fallback
-                    }
-                }
-            } else {
-                fallback
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ConsoleTheme.line))
-    }
-
-    @ViewBuilder
-    private var fallback: some View {
-        if let image = CommerceAsset.image(named: "\(store.id)-qr.png") {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.none)
-                .scaledToFit()
-                .padding(10)
-        } else {
-            Image(systemName: "qrcode")
-                .font(.system(size: 48))
-                .foregroundStyle(ConsoleTheme.tertiary)
-        }
-    }
-}
-
-private extension CommerceStore {
-    var brandColor: Color {
-        switch id {
-        case "xiaohongshu": Color(red: 1.0, green: 0.141, blue: 0.259)
-        case "douyin": Color(red: 0.145, green: 0.902, blue: 0.941)
-        default: ConsoleTheme.green
-        }
     }
 }
 

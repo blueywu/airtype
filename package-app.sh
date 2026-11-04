@@ -6,17 +6,13 @@ APP="$SCRIPT_DIR/dist/build/vRemote.app"
 CONTENTS="$APP/Contents"
 
 cd "$SCRIPT_DIR"
-swift build -c release
+swift build -c release "$@"
 
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS"
 mkdir -p "$CONTENTS/Resources"
 cp "$SCRIPT_DIR/.build/release/vRemote" "$CONTENTS/MacOS/vRemote"
 cp "$SCRIPT_DIR/Packaging/Info.plist" "$CONTENTS/Info.plist"
-for resource_bundle in "$SCRIPT_DIR/.build/release/"*.bundle; do
-  [[ -d "$resource_bundle" ]] || continue
-  ditto "$resource_bundle" "$CONTENTS/Resources/${resource_bundle:t}"
-done
 for localization in "$SCRIPT_DIR/Packaging"/*.lproj; do
   [[ -d "$localization" ]] || continue
   ditto "$localization" "$CONTENTS/Resources/${localization:t}"
@@ -36,7 +32,7 @@ sips -z 256 256 "$CONTENTS/Resources/vRemoterLogo.png" --out "$ICONSET/icon_128x
 sips -z 256 256 "$CONTENTS/Resources/vRemoterLogo.png" --out "$ICONSET/icon_256x256.png" >/dev/null
 sips -z 512 512 "$CONTENTS/Resources/vRemoterLogo.png" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
 sips -z 512 512 "$CONTENTS/Resources/vRemoterLogo.png" --out "$ICONSET/icon_512x512.png" >/dev/null
-cp "$CONTENTS/Resources/vRemoterLogo.png" "$ICONSET/icon_512x512@2x.png"
+sips -z 1024 1024 "$CONTENTS/Resources/vRemoterLogo.png" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
 iconutil -c icns "$ICONSET" -o "$CONTENTS/Resources/vRemoter.icns"
 rm -rf "$ICONSET"
 
@@ -47,10 +43,6 @@ fi
 if [[ -d "$SCRIPT_DIR/Resources/buymeacoffee" ]]; then
   ditto "$SCRIPT_DIR/Resources/buymeacoffee" \
     "$CONTENTS/Resources/BuyMeACoffee"
-fi
-if [[ -d "$SCRIPT_DIR/Resources/Commerce" ]]; then
-  ditto "$SCRIPT_DIR/Resources/Commerce" \
-    "$CONTENTS/Resources/Commerce"
 fi
 if [[ -d "$SCRIPT_DIR/Resources/RemoteImages" ]]; then
   ditto "$SCRIPT_DIR/Resources/RemoteImages" \
