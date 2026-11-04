@@ -6,6 +6,7 @@ enum AppStorage {
     static let macInputEnabledKey = "macInputEnabled"
     static let remoteInputEnabledKey = "remoteInputEnabled"
     static let inputTriggerKeyKey = "inputTriggerKey"
+    static let onDemandAudioKey = "onDemandAudio"
     static let voiceInputMethodKey = "voiceInputMethod"
 
     static let logsDirectory: URL = {
@@ -32,6 +33,7 @@ enum AppStorage {
         UserDefaults.standard.register(defaults: [
             loggingEnabledKey: false,
             recordingEnabledKey: false,
+            onDemandAudioKey: false,
             macInputEnabledKey: true,
             remoteInputEnabledKey: true,
             inputTriggerKeyKey: InputTriggerKey.option.rawValue,
@@ -71,6 +73,11 @@ enum AppStorage {
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: inputTriggerKeyKey)
         }
+    }
+
+    static var onDemandAudio: Bool {
+        get { UserDefaults.standard.bool(forKey: onDemandAudioKey) }
+        set { UserDefaults.standard.set(newValue, forKey: onDemandAudioKey) }
     }
 
     static var voiceShortcut: RemoteCustomShortcut {

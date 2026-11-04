@@ -48,8 +48,11 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
 
     private let stateLock = NSLock()
     private var mixActive = false
-    private var macInputEnabled = AppStorage.macInputEnabled
-    private var remoteInputEnabled = AppStorage.remoteInputEnabled
+    private var isStopped = false
+    private var macInputEnabled: Bool
+    private var remoteInputEnabled: Bool
+    private var onDemandAudio: Bool
+    private var microphonePermissionPending = false
     private var outputDeviceID: AudioDeviceID?
     private var outputIOProcID: AudioDeviceIOProcID?
 
@@ -72,26 +75,52 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     private var macLevelAt = Date.distantPast
     private var captureConfigured = false
 
-    private override init() {
+    init(onDemand: Bool = AppStorage.onDemandAudio,
+         macInputEnabled: Bool = AppStorage.macInputEnabled,
+         remoteInputEnabled: Bool = AppStorage.remoteInputEnabled) {
+        self.onDemandAudio = onDemand
+        self.macInputEnabled = macInputEnabled
+        self.remoteInputEnabled = remoteInputEnabled
         super.init()
-
-        if let deviceID = Self.findOutputDevice(named: Self.targetDeviceName) {
-            startOutputDevice(deviceID)
-        } else {
-            print(
-                "[AUDIO] ⚠️ 找不到 \(Self.targetDeviceName)，" +
-                "请确认 vRemoteDriver.driver 已安装"
-            )
-        }
-
+        reconcileAudioResources()
         if ProcessInfo.processInfo.environment["MIA_DIAGNOSTICS"] == "1" {
             startDiagnosticsTimer()
         }
-        if macInputEnabled {
-            requestBuiltInMicAccess()
+    }
+
+    func setOnDemandAudio(_ enabled: Bool, persist: Bool = true) {
+        stateLock.lock()
+        onDemandAudio = enabled
+        stateLock.unlock()
+        if persist { AppStorage.onDemandAudio = enabled }
+        reconcileAudioResources()
+        print("[AUDIO] mode=\(enabled ? "on-demand" : "compatibility")")
+        onRouteChanged?(isMixActive)
+    }
+
+    private var resourcePolicy: AudioResourcePolicy {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !isStopped else { return AudioResourcePolicy(onDemand: true, active: false, mac: false, remote: false) }
+        return AudioResourcePolicy(onDemand: onDemandAudio, active: mixActive,
+                                   mac: macInputEnabled, remote: remoteInputEnabled)
+    }
+
+    /// Called on the main thread. Start the virtual output synchronously before
+    /// the coordinator sends the host shortcut or accepts the first BLE frame.
+    private func reconcileAudioResources() {
+        if resourcePolicy.output {
+            if outputIOProcID == nil {
+                if let device = Self.findOutputDevice(named: Self.targetDeviceName) {
+                    startOutputDevice(device)
+                } else {
+                    print("[AUDIO] 找不到 vRemoteDr 2ch，请确认驱动已安装")
+                }
+            }
         } else {
-            print("[AUDIO] MacBook 麦克风未勾选，不启动采集")
+            stopOutputDevice()
         }
+        captureQueue.async { [weak self] in self?.reconcileMacCapture() }
     }
 
     // MARK: - Public input API
@@ -116,6 +145,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     /// is open; it no longer selects one microphone over another.
     func setRemoteActive(_ active: Bool) {
         stateLock.lock()
+        guard !isStopped else { stateLock.unlock(); return }
         let changed = mixActive != active
         mixActive = active
         clearPendingBuffersLocked()
@@ -127,6 +157,8 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         stateLock.unlock()
 
         guard changed else { return }
+        reconcileAudioResources()
+        if !active { onMacLevel?(-120) }
         print(
             active
                 ? "[AUDIO] 双麦克风混音开启 · X6 + MacBook · Mac 对齐延迟 120ms"
@@ -135,7 +167,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         onRouteChanged?(active)
     }
 
-    func setInputEnabled(mac: Bool, remote: Bool) {
+    func setInputEnabled(mac: Bool, remote: Bool, persist: Bool = true) {
         stateLock.lock()
         let macChanged = macInputEnabled != mac
         let remoteChanged = remoteInputEnabled != remote
@@ -151,13 +183,12 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         }
         stateLock.unlock()
 
-        AppStorage.macInputEnabled = mac
-        AppStorage.remoteInputEnabled = remote
-
-        if macChanged {
-            setMacCaptureEnabled(mac)
-            if !mac { onMacLevel?(-120) }
+        if persist {
+            AppStorage.macInputEnabled = mac
+            AppStorage.remoteInputEnabled = remote
         }
+        reconcileAudioResources()
+        if !mac { onMacLevel?(-120) }
         if macChanged || remoteChanged {
             print(
                 "[AUDIO] 输入选择更新 · MacBook=\(mac ? "ON" : "OFF") " +
@@ -169,23 +200,27 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
 
     var isMacInputEnabled: Bool { inputState.macEnabled }
     var isRemoteInputEnabled: Bool { inputState.remoteEnabled }
-    var isOutputDeviceAvailable: Bool { outputDeviceID != nil }
+    var isOutputRunning: Bool { outputIOProcID != nil }
+    var isOutputDeviceAvailable: Bool { Self.findOutputDevice(named: Self.targetDeviceName) != nil }
 
     func stop() {
         diagnosticsTimer?.invalidate()
         diagnosticsTimer = nil
 
-        if captureSession.isRunning {
-            captureSession.stopRunning()
-        }
+        stateLock.lock()
+        mixActive = false
+        isStopped = true
+        clearPendingBuffersLocked()
+        stateLock.unlock()
+        captureQueue.sync { releaseMacCapture() }
+        stopOutputDevice()
+    }
 
+    private func stopOutputDevice() {
         if let deviceID = outputDeviceID, let ioProcID = outputIOProcID {
-            let stopStatus = AudioDeviceStop(deviceID, ioProcID)
-            let destroyStatus = AudioDeviceDestroyIOProcID(deviceID, ioProcID)
-            print(
-                "[AUDIO] vRemote IOProc 已释放: " +
-                "stop=\(stopStatus), destroy=\(destroyStatus)"
-            )
+            let stopped = AudioDeviceStop(deviceID, ioProcID)
+            let destroyed = AudioDeviceDestroyIOProcID(deviceID, ioProcID)
+            print("[AUDIO] vRemote IOProc 已释放: stop=\(stopped), destroy=\(destroyed)")
         }
         outputIOProcID = nil
         outputDeviceID = nil
@@ -193,33 +228,47 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
 
     // MARK: - Built-in microphone capture
 
-    private func requestBuiltInMicAccess() {
+    /// All AVCapture configuration, permission callbacks and start/stop work
+    /// are serialized on captureQueue. Re-read intent after permission approval
+    /// so a late approval cannot reopen a microphone after the session ended.
+    private func reconcileMacCapture() {
+        guard resourcePolicy.microphone else { releaseMacCapture(); return }
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             startBuiltInMicCapture()
         case .notDetermined:
-            print("[AUDIO] 请求 MacBook 麦克风权限…")
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                DispatchQueue.main.async {
-                    if granted {
-                        self?.startBuiltInMicCapture()
-                    } else {
-                        print("[AUDIO] ⚠️ MacBook 麦克风权限被拒绝")
-                    }
+            guard !microphonePermissionPending else { return }
+            microphonePermissionPending = true
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] _ in
+                self?.captureQueue.async { [weak self] in
+                    guard let self else { return }
+                    self.microphonePermissionPending = false
+                    self.reconcileMacCapture()
                 }
             }
         default:
-            print("[AUDIO] ⚠️ 没有 MacBook 麦克风权限；当前只能收到 X6 音频")
+            releaseMacCapture()
         }
     }
 
+    private func releaseMacCapture() {
+        if captureSession.isRunning { captureSession.stopRunning() }
+        guard captureConfigured else { return }
+        captureSession.beginConfiguration()
+        for output in captureSession.outputs {
+            (output as? AVCaptureAudioDataOutput)?.setSampleBufferDelegate(nil, queue: nil)
+            captureSession.removeOutput(output)
+        }
+        for input in captureSession.inputs { captureSession.removeInput(input) }
+        captureSession.commitConfiguration()
+        captureConfigured = false
+        print("[AUDIO] 电脑麦克风采集与设备绑定已释放")
+    }
+
     private func startBuiltInMicCapture() {
+        guard resourcePolicy.microphone else { return }
         if captureConfigured {
-            captureQueue.async { [weak self] in
-                guard let self, !self.captureSession.isRunning else { return }
-                self.captureSession.startRunning()
-                print("[AUDIO] MacBook 麦克风采集已恢复")
-            }
+            if !captureSession.isRunning { captureSession.startRunning() }
             return
         }
         let discovery = AVCaptureDevice.DiscoverySession(
@@ -262,14 +311,11 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             captureSession.commitConfiguration()
             captureConfigured = true
 
-            captureQueue.async { [weak self] in
-                guard let self else { return }
-                self.captureSession.startRunning()
-                print(
-                    "[AUDIO] MacBook 麦克风采集已启动: " +
-                    "\(device.localizedName), running=\(self.captureSession.isRunning)"
-                )
-            }
+            guard resourcePolicy.microphone else { releaseMacCapture(); return }
+            captureSession.startRunning()
+            // A close can race the blocking startRunning call.
+            if !resourcePolicy.microphone { releaseMacCapture() }
+            print("[AUDIO] 电脑麦克风采集 running=\(captureSession.isRunning)")
         } catch {
             print("[AUDIO] ⚠️ MacBook 麦克风采集失败: \(error.localizedDescription)")
         }
@@ -280,7 +326,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        guard isMacInputEnabled,
+        guard resourcePolicy.microphone, isMacInputEnabled,
               let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
               let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(
                 formatDescription
@@ -348,18 +394,6 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         stateLock.lock()
         defer { stateLock.unlock() }
         return (mixActive, macInputEnabled, remoteInputEnabled)
-    }
-
-    private func setMacCaptureEnabled(_ enabled: Bool) {
-        if enabled {
-            requestBuiltInMicAccess()
-            return
-        }
-        captureQueue.async { [weak self] in
-            guard let self, self.captureSession.isRunning else { return }
-            self.captureSession.stopRunning()
-            print("[AUDIO] MacBook 麦克风采集已暂停")
-        }
     }
 
     private func schedule(
@@ -640,6 +674,17 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         }
         return nil
     }
+
+    #if DEBUG
+    var debugResources: (outputRunning: Bool, macRunning: Bool, inputs: Int, renders: Int, renderedFrames: Int) {
+        let capture = captureQueue.sync { (captureSession.isRunning, captureSession.inputs.count) }
+        stateLock.lock()
+        let renders = renderCallbackCount
+        let frames = remoteSessionRenderedFrames
+        stateLock.unlock()
+        return (outputIOProcID != nil, capture.0, capture.1, renders, frames)
+    }
+    #endif
 
     // MARK: - Diagnostics
 

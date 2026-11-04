@@ -268,6 +268,7 @@ private final class ConsoleViewModel: ObservableObject {
     @Published var doubaoIsRecording = false
     @Published var doubaoInput = "--"
     @Published var driverAvailable = false
+    @Published var audioOutputRunning = false
     @Published var macLevelDB = -120.0
     @Published var remoteLevelDB = -120.0
     @Published var microphoneGranted = false
@@ -276,6 +277,7 @@ private final class ConsoleViewModel: ObservableObject {
     @Published var bluetoothGranted = false
     @Published var x6Connected = false
     @Published var chromecastConnected = false
+    @Published var onDemandAudio = AppStorage.onDemandAudio
     @Published var voiceShortcut = AppStorage.voiceShortcut
     @Published var voiceInputMethod = VoiceInputMethod.current
     @Published var activeModal: ConsoleModal?
@@ -287,6 +289,7 @@ private final class ConsoleViewModel: ObservableObject {
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
+    var onOnDemandAudioChanged: ((Bool) -> Void)?
     var onMacInputEnabledChanged: ((Bool) -> Void)?
     var onRemoteInputEnabledChanged: ((Bool) -> Void)?
     var onInputTriggerChanged: (() -> Void)?
@@ -296,6 +299,11 @@ private final class ConsoleViewModel: ObservableObject {
     var doubaoUsesVRemote: Bool { doubaoInput.contains("vRemoteDr 2ch") }
     var macSolo: Bool { macInputEnabled && !remoteInputEnabled }
     var remoteSolo: Bool { remoteInputEnabled && !macInputEnabled }
+
+    func setOnDemandAudio(_ enabled: Bool) {
+        onDemandAudio = enabled
+        onOnDemandAudioChanged?(enabled)
+    }
 
     func setInputTrigger(_ trigger: RemoteCustomShortcut) {
         guard voiceShortcut != trigger else { return }
@@ -462,10 +470,11 @@ private final class ConsoleViewModel: ObservableObject {
 }
 
 final class DebugWindowController: NSWindowController, NSWindowDelegate {
-    private static let windowSize = NSSize(width: 775, height: 658)
+    private static let windowSize = NSSize(width: 775, height: 700)
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
+    var onOnDemandAudioChanged: ((Bool) -> Void)?
     var onMacInputEnabledChanged: ((Bool) -> Void)?
     var onRemoteInputEnabledChanged: ((Bool) -> Void)?
     var onInputTriggerChanged: (() -> Void)?
@@ -503,6 +512,9 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
 
         model.onStopMicrophone = { [weak self] in self?.onStopMicrophone?() }
         model.onRestartApp = { [weak self] in self?.onRestartApp?() }
+        model.onOnDemandAudioChanged = { [weak self] enabled in
+            self?.onOnDemandAudioChanged?(enabled)
+        }
         model.onMacInputEnabledChanged = { [weak self] enabled in
             self?.onMacInputEnabledChanged?(enabled)
         }
@@ -553,10 +565,12 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         x6Connected: Bool,
         chromecastConnected: Bool,
         macLevelDB: Double? = nil,
-        remoteLevelDB: Double? = nil
+        remoteLevelDB: Double? = nil,
+        audioOutputRunning: Bool = false
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.model.audioOutputRunning = audioOutputRunning
             self.model.status = status
             self.model.hidConnected = hidConnected
             self.model.bleConnected = bleConnected
@@ -611,7 +625,22 @@ private struct StudioMixerView: View {
             header
                 .frame(height: 68)
             if model.selectedPage == .mixer {
-                Spacer().frame(height: 15)
+                Spacer().frame(height: 10)
+                HStack(spacing: 12) {
+                    Toggle(L10n.text("按需启停音频", "On-demand audio"), isOn: Binding(
+                        get: { model.onDemandAudio }, set: model.setOnDemandAudio
+                    ))
+                    .toggleStyle(.switch)
+                    .fixedSize()
+                    Text(model.onDemandAudio
+                        ? L10n.text("空闲时释放音频；开始听写时开启", "Release audio while idle; open for dictation")
+                        : L10n.text("兼容模式：音频通道常驻；有问题可切回此模式", "Compatibility: audio stays open; switch back if needed"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(ConsoleTheme.secondary)
+                    Spacer(minLength: 0)
+                }
+                .frame(height: 32)
+                Spacer().frame(height: 10)
                 mixer
                     .frame(height: 288)
                 Spacer().frame(height: 17)
@@ -624,7 +653,7 @@ private struct StudioMixerView: View {
             }
         }
         .padding(20)
-        .frame(width: 775, height: 658)
+        .frame(width: 775, height: 700)
         .background(ConsoleTheme.panel)
         .overlay(alignment: .bottom) {
             supportLink
@@ -1493,6 +1522,8 @@ private struct InputChannelView: View {
 private struct OutputChannelView: View {
     @ObservedObject var model: ConsoleViewModel
 
+    private var idleReleased: Bool { model.onDemandAudio && !model.audioOutputRunning }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(L10n.text("混合输出", "Mixed Output"))
@@ -1510,19 +1541,22 @@ private struct OutputChannelView: View {
                     .frame(width: 10, height: 10)
                 Text(outputError
                     ? L10n.text("未输出", "No output")
-                    : model.remoteStreaming
+                    : idleReleased
+                        ? L10n.text("空闲 · 音频已释放", "Idle · Audio released")
+                        : model.remoteStreaming
                         ? L10n.text("正在输出", "Sending")
                         : L10n.text("等待录音", "Waiting"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(outputError ? ConsoleTheme.red : ConsoleTheme.amber)
                 Spacer()
-                Text(outputError ? "−∞" : "−9 dB")
+                Text(outputError || idleReleased || max(model.macLevelDB, model.remoteLevelDB) < -100
+                    ? "−∞" : String(format: "%.0f dB", max(model.macLevelDB, model.remoteLevelDB)))
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(ConsoleTheme.secondary)
             }
             .padding(.top, 15)
             MeterView(
-                db: outputError ? -120 : max(model.macLevelDB, model.remoteLevelDB),
+                db: outputError || idleReleased ? -120 : max(model.macLevelDB, model.remoteLevelDB),
                 color: ConsoleTheme.amber,
                 count: 14
             )
@@ -1538,7 +1572,7 @@ private struct OutputChannelView: View {
             .padding(.top, 6)
             HStack(spacing: 8) {
                 Circle().fill(ConsoleTheme.amber).frame(width: 10, height: 10)
-                Text(L10n.text("两路已合并", "Inputs mixed"))
+                Text(idleReleased ? L10n.text("等待开始听写", "Waiting for dictation") : L10n.text("两路已合并", "Inputs mixed"))
                     .font(.system(
                         size: AppLanguage.selected.usesEnglish ? 11 : 14,
                         weight: .semibold
@@ -1559,7 +1593,9 @@ private struct OutputChannelView: View {
             .padding(.top, 25)
             Text(outputError
                 ? L10n.text("等待音频链路恢复", "Waiting for audio route")
-                : L10n.text(
+                : idleReleased
+                    ? L10n.text("开始听写后开启音频通道", "Audio opens when dictation starts")
+                    : L10n.text(
                     "\(model.voiceInputMethod.shortName)正在接收",
                     "\(model.voiceInputMethod.shortName) is receiving"
                 ))

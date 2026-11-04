@@ -1,5 +1,35 @@
 # vRemoter
 
+## Optional on-demand audio
+
+Branch `codex/on-demand-audio` adds **按需启停音频** to the Audio page.
+It is **off by default**, preserving the upstream compatibility mode. Toggle
+it on to stop and destroy this app's virtual-audio IOProc while idle and to
+release any computer microphone capture inputs/outputs. Start a voice session
+to open audio again; toggle off to restore compatibility without reinstalling.
+The choice persists across launches. Bluetooth/HID observation remains active.
+Other apps that independently use a microphone may still show a macOS privacy
+indicator even when this application's audio resources are released.
+
+The output device is discovered separately from running its audio stream, so
+an installed-but-idle driver is shown as available. The virtual output starts
+synchronously before the host shortcut/first remote buffer. Physical capture
+configuration is serialized; queued work and permission callbacks re-check the
+latest intent, including shutdown. On-demand mode also releases the route on
+last-remote disconnection and ignores late host activation until a new intent
+or inactive state; compatibility mode retains upstream disconnect behavior.
+
+Validation on 2026-11-04: 34 policy/real-HAL lifecycle assertions, 51 session
+assertions and 29 shortcut assertions pass. HAL tests use only silent samples,
+never activate a physical microphone, and never change user preferences. Three
+open/feed/close cycles render the first queued buffer and destroy their IOProc;
+active mode switching, idle rollback and mute/unmute also pass. Debug/Release
+builds and ad-hoc signature checks pass. In GUI startup samples, on-demand idle
+reports CoreAudio runningInput=0/runningOutput=0; compatibility reports 1/1.
+System default audio device IDs are unchanged. Actual speech quality, physical
+microphone shutdown and the visual menu-bar indicator still need user testing.
+No installed application or audio driver is replaced by these checks.
+
 ## Recordable voice shortcuts
 
 Branch `codex/recordable-voice-shortcuts` extends the local-only version.

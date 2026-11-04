@@ -72,6 +72,8 @@ final class X6SessionCoordinator {
     private let triggerTap: () -> Void
     private let now: () -> Date
     private let openingTimeout: () -> TimeInterval
+    private let onDemandAudio: () -> Bool
+    private var ignoreDisconnectedHost = false
 
     private var phase: Phase = .closed
     private var owner: Owner = .none
@@ -108,13 +110,15 @@ final class X6SessionCoordinator {
         },
         triggerTap: @escaping () -> Void = { Key.triggerTap() },
         now: @escaping () -> Date = Date.init,
-        openingTimeout: @escaping () -> TimeInterval = { VoiceInputMethod.current.openingTimeout }
+        openingTimeout: @escaping () -> TimeInterval = { VoiceInputMethod.current.openingTimeout },
+        onDemandAudio: @escaping () -> Bool = { AppStorage.onDemandAudio }
     ) {
         self.doubaoState = doubaoState
         self.setRemoteRouteActive = setRemoteRouteActive
         self.triggerTap = triggerTap
         self.now = now
         self.openingTimeout = openingTimeout
+        self.onDemandAudio = onDemandAudio
     }
 
     var debugSnapshot: DebugSnapshot {
@@ -142,6 +146,14 @@ final class X6SessionCoordinator {
         supportsPhysicalHoldGesture: Bool = false
     ) {
         let snapshot = doubaoState.snapshotNow()
+        // A fresh physical gesture after reconnect is deliberate intent. If
+        // the host is still recording, adopt that state so this tap can close
+        // it instead of leaving the reconnected remote in a closed phase.
+        if ignoreDisconnectedHost,
+           (supportsPhysicalHoldGesture && reason == 0x03) || (remote == .x6 && reason == 0x00) {
+            ignoreDisconnectedHost = false
+            if snapshot.isRecording { phase = .open; owner = .keyboard }
+        }
         let inserted = streamingRemotes.insert(remote).inserted
         let hostRequestedAttempt =
             openRequestedRemote == remote ? openRequestedAttempt : nil
@@ -354,9 +366,14 @@ final class X6SessionCoordinator {
 
         guard sessionRemote == remote else { return }
         sessionRemote = preferredRemoteProvider?()
-        guard phase == .opening || phase == .open,
-              let replacement = sessionRemote
-        else { return }
+        guard phase == .opening || phase == .open else { return }
+        guard let replacement = sessionRemote else {
+            guard onDemandAudio() else { return }
+            ignoreDisconnectedHost = true
+            finalizeClosed(reason: "last remote disconnected")
+            publish("遥控器已断开 · 音频已关闭")
+            return
+        }
         requestRemoteTransportOpen(
             replacement,
             bypassDebounce: false,
@@ -394,6 +411,7 @@ final class X6SessionCoordinator {
     /// remote transport only; it never synthesizes a second keyboard event.
     func triggerDownObserved(isSynthetic: Bool) {
         guard !isSynthetic else { return }
+        ignoreDisconnectedHost = false
         let snapshot = doubaoState.snapshotNow()
         let shouldOpen: Bool
         switch phase {
@@ -466,6 +484,7 @@ final class X6SessionCoordinator {
     ) {
         switch snapshot.state {
         case .active:
+            if ignoreDisconnectedHost && phase == .closed { return }
             switch phase {
             case .opening:
                 startVerificationWorkItem?.cancel()
@@ -501,6 +520,7 @@ final class X6SessionCoordinator {
             }
 
         case .inactive:
+            ignoreDisconnectedHost = false
             switch phase {
             case .opening:
                 // The opening verification owns this transient idle window.
@@ -564,6 +584,7 @@ final class X6SessionCoordinator {
         sendTrigger: Bool,
         requestTransportImmediately: Bool
     ) {
+        ignoreDisconnectedHost = false
         generation &+= 1
         cancelScheduledWork()
         phase = .opening

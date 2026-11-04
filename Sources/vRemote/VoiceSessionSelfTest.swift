@@ -48,7 +48,7 @@ enum VoiceSessionSelfTest {
         var openResults = [RemoteMicrophoneOpenResult]()
         var preferredRemote: VoiceRemoteID? = .chromecast
 
-        init(initialState: DoubaoAudioStateMonitor.State = .inactive) {
+        init(initialState: DoubaoAudioStateMonitor.State = .inactive, onDemandAudio: Bool = false) {
             doubao = FakeDoubaoState(state: initialState)
             var routeSink: ((Bool) -> Void)?
             var triggerSink: (() -> Void)?
@@ -58,7 +58,8 @@ enum VoiceSessionSelfTest {
                 setRemoteRouteActive: { routeSink?($0) },
                 triggerTap: { triggerSink?() },
                 now: { nowSink?() ?? Date(timeIntervalSince1970: 0) },
-                openingTimeout: { 1.0 }
+                openingTimeout: { 1.0 },
+                onDemandAudio: { onDemandAudio }
             )
             routeSink = { [weak self] active in
                 self?.routeChanges.append(active)
@@ -140,6 +141,7 @@ enum VoiceSessionSelfTest {
         testDebouncedRetry(checks)
         testSilentAckReopens(checks)
         testFirstFrameKeepsStream(checks)
+        testDisconnectReleasesRoute(checks)
         emit("[SELF-TEST] completed failures=\(checks.failures)")
         return checks.failures == 0
     }
@@ -302,6 +304,36 @@ enum VoiceSessionSelfTest {
         c.expect(h.openRequests.count == 2, "AUDIO_STOP of silent stream reopens microphone")
         c.expect(h.coordinator.debugSnapshot.phase == "open", "silent-ack recovery keeps session open")
         c.expect(h.triggerTapCount == 1, "silent-ack recovery sends no extra trigger")
+    }
+
+    private static func testDisconnectReleasesRoute(_ c: CheckContext) {
+        let h = Harness(onDemandAudio: true)
+        h.beginChromecastPress()
+        h.doubao.emit(.active)
+        h.preferredRemote = nil
+        h.coordinator.remoteDisconnected(.chromecast)
+        c.expect(h.coordinator.debugSnapshot.phase == "closed", "last remote disconnect closes the session")
+        c.expect(h.routeChanges.last == false, "last remote disconnect releases audio resources")
+        c.expect(h.coordinator.debugSnapshot.openRequestedRemote == nil, "disconnect clears pending open requests")
+        h.doubao.emit(.active)
+        c.expect(h.coordinator.debugSnapshot.phase == "closed", "late host capture cannot reopen a disconnected route")
+        h.preferredRemote = .chromecast
+        h.beginChromecastPress()
+        h.endChromecastPress()
+        c.expect(h.coordinator.debugSnapshot.phase == "closing", "fresh gesture after reconnect can close the active host")
+        let legacy = Harness()
+        legacy.beginChromecastPress()
+        legacy.doubao.emit(.active)
+        legacy.preferredRemote = nil
+        legacy.coordinator.remoteDisconnected(.chromecast)
+        c.expect(legacy.routeChanges.last == true, "compatibility retains upstream disconnect behavior")
+        let replacement = Harness(onDemandAudio: true)
+        replacement.beginChromecastPress()
+        replacement.doubao.emit(.active)
+        replacement.preferredRemote = .x6
+        replacement.coordinator.remoteDisconnected(.chromecast)
+        c.expect(replacement.coordinator.debugSnapshot.sessionRemote == .x6, "connected replacement receives the session")
+        c.expect(replacement.routeChanges.last == true, "replacement keeps the active audio route")
     }
 
     private static func testFirstFrameKeepsStream(_ c: CheckContext) {

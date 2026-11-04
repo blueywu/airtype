@@ -273,8 +273,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         chromecastHID.start()
         chromecastBLE.start()
 
-        // Start the loopback engine eagerly so device binding is verified
-        // before the first BLE audio packet arrives.
+        // Initialize policy without opening audio in on-demand idle mode.
         _ = AudioPipe.shared
         AudioPipe.shared.onMacLevel = { [weak self] db in
             self?.debugWindow.updateMacLevel(db)
@@ -472,7 +471,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             x6Connected: x6HIDConnected || x6BLEConnected,
             chromecastConnected: chromecastHIDConnected || chromecastBLEConnected,
             macLevelDB: nil,
-            remoteLevelDB: nil
+            remoteLevelDB: nil,
+            audioOutputRunning: AudioPipe.shared.isOutputRunning
         )
     }
 
@@ -482,6 +482,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         debugWindow.onRestartApp = { [weak self] in
             self?.restartAppNow()
+        }
+        debugWindow.onOnDemandAudioChanged = { [weak self] enabled in
+            AudioPipe.shared.setOnDemandAudio(enabled)
+            self?.refreshMenuState()
         }
         debugWindow.onMacInputEnabledChanged = { [weak self] enabled in
             let audio = AudioPipe.shared
@@ -721,6 +725,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 // MARK: - Entry
 
 #if DEBUG
+if CommandLine.arguments.contains("--audio-lifecycle-self-test") {
+    exit(AudioLifecycleSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
+}
 if CommandLine.arguments.contains("--shortcut-self-test") {
     exit(ShortcutSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
 }
