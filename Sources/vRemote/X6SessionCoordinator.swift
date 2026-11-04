@@ -73,6 +73,7 @@ final class X6SessionCoordinator {
     private let now: () -> Date
     private let openingTimeout: () -> TimeInterval
     private let onDemandAudio: () -> Bool
+    private let canAdoptExternal: () -> Bool
     private var ignoreDisconnectedHost = false
 
     private var phase: Phase = .closed
@@ -111,7 +112,8 @@ final class X6SessionCoordinator {
         triggerTap: @escaping () -> Void = { Key.triggerTap() },
         now: @escaping () -> Date = Date.init,
         openingTimeout: @escaping () -> TimeInterval = { VoiceInputMethod.current.openingTimeout },
-        onDemandAudio: @escaping () -> Bool = { AppStorage.onDemandAudio }
+        onDemandAudio: @escaping () -> Bool = { AppStorage.onDemandAudio },
+        canAdoptExternal: @escaping () -> Bool = { true }
     ) {
         self.doubaoState = doubaoState
         self.setRemoteRouteActive = setRemoteRouteActive
@@ -119,6 +121,7 @@ final class X6SessionCoordinator {
         self.now = now
         self.openingTimeout = openingTimeout
         self.onDemandAudio = onDemandAudio
+        self.canAdoptExternal = canAdoptExternal
     }
 
     var debugSnapshot: DebugSnapshot {
@@ -461,6 +464,27 @@ final class X6SessionCoordinator {
 
     // MARK: - Lifecycle / manual control
 
+    /// A mapped service action uses the same transport and confirmation rules as the voice key.
+    func toggleMappedAction(remote requestedRemote: VoiceRemoteID? = nil) {
+        if phase == .closed, doubaoState.snapshotNow().isRecording {
+            adoptExternalActivation(doubaoState.snapshotNow())
+        }
+        if phase == .open || phase == .opening {
+            beginClosing(sendTrigger: true, reason: "mapped service")
+        } else if phase == .closed {
+            if let remote = requestedRemote ?? preferredRemoteProvider?() {
+                beginOpening(owner: .remote, remote: remote, sendTrigger: true, requestTransportImmediately: true)
+            } else {
+                beginOpeningWithoutRemote()
+                triggerTap()
+            }
+        }
+    }
+
+    func requestRecognitionClose() {
+        beginClosing(sendTrigger: true, reason: "service switch or disabled")
+    }
+
     func forceClose() {
         generation &+= 1
         cancelScheduledWork()
@@ -516,7 +540,7 @@ final class X6SessionCoordinator {
                 )
 
             case .closed:
-                adoptExternalActivation(snapshot)
+                if canAdoptExternal() { adoptExternalActivation(snapshot) }
             }
 
         case .inactive:

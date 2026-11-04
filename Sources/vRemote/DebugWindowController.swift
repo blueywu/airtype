@@ -232,13 +232,17 @@ private enum ConsoleModal: Identifiable {
 private enum ConsolePage: String, CaseIterable, Identifiable {
     case mixer
     case mapping
+    case services
+    case usage
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .mixer: L10n.text("音频", "Audio")
-        case .mapping: L10n.text("按键映射", "Key Mapping")
+        case .mapping: L10n.text("按键", "Keys")
+        case .services: L10n.text("输入服务", "Services")
+        case .usage: L10n.text("本地记录", "Usage")
         }
     }
 
@@ -246,6 +250,8 @@ private enum ConsolePage: String, CaseIterable, Identifiable {
         switch self {
         case .mixer: "slider.horizontal.3"
         case .mapping: "keyboard"
+        case .services: "waveform"
+        case .usage: "clock"
         }
     }
 }
@@ -276,6 +282,7 @@ private final class ConsoleViewModel: ObservableObject {
     @Published var onDemandAudio = AppStorage.onDemandAudio
     @Published var voiceShortcut = AppStorage.voiceShortcut
     @Published var voiceInputMethod = VoiceInputMethod.current
+    @Published var voiceActionStatus = ""
     @Published var activeModal: ConsoleModal?
     @Published var showX6MicHint = !UserDefaults.standard.bool(
         forKey: "vRemoter.hasCompletedX6MicTest"
@@ -288,7 +295,6 @@ private final class ConsoleViewModel: ObservableObject {
     var onMacInputEnabledChanged: ((Bool) -> Void)?
     var onRemoteInputEnabledChanged: ((Bool) -> Void)?
     var onInputTriggerChanged: (() -> Void)?
-    var onVoiceInputMethodChanged: ((VoiceInputMethod) -> Void)?
     var onRemoteMappingEnabledChanged: ((SupportedRemoteID, Bool) -> Void)?
 
     var doubaoUsesVRemote: Bool { doubaoInput.contains("vRemoteDr 2ch") }
@@ -298,22 +304,6 @@ private final class ConsoleViewModel: ObservableObject {
     func setOnDemandAudio(_ enabled: Bool) {
         onDemandAudio = enabled
         onOnDemandAudioChanged?(enabled)
-    }
-
-    func setInputTrigger(_ trigger: RemoteCustomShortcut) {
-        guard voiceShortcut != trigger else { return }
-        voiceShortcut = trigger
-        AppStorage.voiceShortcut = trigger
-        onInputTriggerChanged?()
-    }
-
-    func setVoiceInputMethod(_ method: VoiceInputMethod) {
-        guard voiceInputMethod != method else { return }
-        voiceInputMethod = method
-        VoiceInputMethod.select(method)
-        voiceShortcut = AppStorage.voiceShortcut
-        onInputTriggerChanged?()
-        onVoiceInputMethodChanged?(method)
     }
 
     func setRemoteMappingEnabled(_ enabled: Bool, remote: SupportedRemoteID) {
@@ -431,7 +421,8 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
     var onMacInputEnabledChanged: ((Bool) -> Void)?
     var onRemoteInputEnabledChanged: ((Bool) -> Void)?
     var onInputTriggerChanged: (() -> Void)?
-    var onVoiceInputMethodChanged: ((VoiceInputMethod) -> Void)?
+    func updateActiveService(_ service: VoiceInputMethod) { model.voiceInputMethod = service }
+    func updateVoiceActionStatus(_ text: String) { model.voiceActionStatus = text }
     var onRemoteMappingEnabledChanged: ((SupportedRemoteID, Bool) -> Void)?
 
     private let model = ConsoleViewModel()
@@ -476,9 +467,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         }
         model.onInputTriggerChanged = { [weak self] in
             self?.onInputTriggerChanged?()
-        }
-        model.onVoiceInputMethodChanged = { [weak self] method in
-            self?.onVoiceInputMethodChanged?(method)
         }
         model.onRemoteMappingEnabledChanged = { [weak self] remote, enabled in
             self?.onRemoteMappingEnabledChanged?(remote, enabled)
@@ -596,13 +584,26 @@ private struct StudioMixerView: View {
                     .frame(height: 230)
             } else {
                 Spacer().frame(height: 15)
-                KeyMappingView(model: model)
-                    .frame(height: 535)
+                Group {
+                    switch model.selectedPage {
+                    case .mapping: KeyMappingView(model: model)
+                    case .services: VoiceServicesView(model: model)
+                    case .usage: LocalUsageView()
+                    case .mixer: EmptyView()
+                    }
+                }.frame(height: 535)
             }
+            #if DEBUG
+            if CommandLine.arguments.contains("--p1-ui-review") {
+                Text("界面测试 · 模拟设备与会话 · 独立数据目录")
+                    .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+            }
+            #endif
         }
         .padding(20)
         .frame(width: 775, height: 700)
         .background(ConsoleTheme.panel)
+        .tint(ConsoleTheme.green)
         .sheet(item: $model.activeModal) { modal in
             switch modal {
             case .permission(let kind):
@@ -618,7 +619,7 @@ private struct StudioMixerView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(nsImage: LogoAsset.image)
+            Image(nsImage: WaveformIcon.image)
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 45, height: 45)
@@ -626,12 +627,12 @@ private struct StudioMixerView: View {
                 Text("AirType")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(ConsoleTheme.text)
-                Text(L10n.text("双麦语音输入", "Dual microphone input"))
+                Text(L10n.text("遥控语音输入", "Remote voice input"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ConsoleTheme.secondary)
             }
             ConsolePageSelector(selection: $model.selectedPage)
-                .frame(width: 202)
+                .frame(width: 320)
             Spacer()
             HStack(spacing: 7) {
                 Circle()
@@ -826,86 +827,208 @@ private struct ConsolePageSelector: View {
     }
 }
 
+private struct VoiceServicesView: View {
+    @ObservedObject var model: ConsoleViewModel
+    @ObservedObject private var services = VoiceServiceStore.shared
+    @State private var recording: VoiceInputMethod?
+    @State private var adding = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("输入服务").font(.system(size: 20, weight: .semibold))
+                    Text("勾选要使用的服务，再到「按键」绑定不同按钮。")
+                        .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+                }
+                Spacer()
+                Button("添加输入服务…") { adding = true }
+            }
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(services.added) { service in
+                        serviceRow(service)
+                    }
+                }
+            }
+            if let message = services.message {
+                Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.system(size: 12))
+            }
+            if !model.voiceActionStatus.isEmpty {
+                Label(model.voiceActionStatus, systemImage: "info.circle").font(.system(size: 12)).foregroundStyle(.orange)
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("快捷键需与对应应用中的设置一致；左右 Command 等按键会分别识别。")
+                Text("同时启用多个服务时，每次只运行一项听写；切换前先确认上一项停止。")
+                Text("Codex 听写仅在 Codex 位于前台时启动。这些设置不会切换系统输入法。")
+            }.font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+                .padding(15).frame(maxWidth: .infinity, alignment: .leading)
+                .background(panelBackground(ConsoleTheme.surface, radius: 14))
+        }
+        .sheet(item: $recording) { service in
+            KeyboardShortcutCaptureView(buttonTitle: service.title,
+                onCancel: { recording = nil }, onSave: { shortcut in
+                    if services.setShortcut(shortcut, for: service) { model.onInputTriggerChanged?(); recording = nil }
+                })
+                .overlay(alignment: .bottom) {
+                    if let message = services.message { Text(message).font(.system(size: 10)).foregroundStyle(.orange).padding(4) }
+                }
+        }
+        .sheet(isPresented: $adding) {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("添加输入服务").font(.system(size: 21, weight: .semibold))
+                Text("只添加配置，不会下载或安装应用。添加后请录制快捷键，再勾选启用。")
+                    .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+                ForEach(VoiceInputMethod.allCases.filter { !services.profile($0).added }) { service in
+                    HStack { Text(service.title); Spacer(); Button("添加") { services.add(service); adding = false } }
+                }
+                Button("完成") { adding = false }
+            }.padding(25).frame(width: 420).background(ConsoleTheme.panel)
+        }
+        .onAppear {
+            #if DEBUG
+            if CommandLine.arguments.contains("--review-add") { adding = true }
+            if CommandLine.arguments.contains("--review-capture") { recording = .typeless }
+            #endif
+        }
+    }
+    private func serviceRow(_ service: VoiceInputMethod) -> some View {
+        let profile = services.profile(service)
+        return HStack(spacing: 14) {
+            Toggle(service.title, isOn: Binding(get: { services.profile(service).enabled }, set: { _ = services.setEnabled($0, for: service) }))
+                .toggleStyle(.checkbox).font(.system(size: 16, weight: .semibold)).frame(width: 175, alignment: .leading)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(profile.shortcut?.label ?? "尚未配置快捷键").font(.system(size: 14, weight: .medium))
+                Text(profile.shortcut == nil ? "请先录制，再勾选启用" : (profile.enabled ? "已启用 · 可用于按钮映射" : "已停用 · 保留已有配置"))
+                    .font(.system(size: 11)).foregroundStyle(profile.enabled ? ConsoleTheme.green : ConsoleTheme.secondary)
+            }
+            Spacer()
+            Button(profile.shortcut == nil ? "录制快捷键" : "重新录制") { recording = service }
+                .disabled(model.remoteStreaming || model.doubaoIsRecording)
+        }.padding(18).frame(minHeight: 96).background(panelBackground(ConsoleTheme.surface, radius: 16))
+    }
+}
+
+private struct LocalUsageView: View {
+    @ObservedObject private var usage = LocalUsageStore.shared
+    @State private var confirmClear = false
+    @State private var exportMessage: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            HStack {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("本地使用记录").font(.system(size: 20, weight: .semibold))
+                    Text("从开启后开始记录；关闭后保留历史。图表将在后续版本加入。")
+                        .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+                }
+                Spacer()
+                Toggle("记录使用情况", isOn: Binding(get: { usage.enabled }, set: usage.setEnabled)).toggleStyle(.switch)
+            }
+            Text("仅保存时间、听写时长、输入服务、触发来源，以及开始听写时所在应用。\n不保存录音、识别文字、窗口标题或网址；数据不上传。")
+                .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+                .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                .background(panelBackground(ConsoleTheme.surface, radius: 14))
+            HStack {
+                Text("最近记录（共 \(usage.records.count) 条）").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Button("导出 JSON…") {
+                    let panel = NSSavePanel(); panel.nameFieldStringValue = "AirType-usage.json"
+                    if panel.runModal() == .OK, let url = panel.url {
+                        do { try usage.export(to: url); exportMessage = "已导出。" }
+                        catch { exportMessage = "导出失败：" + error.localizedDescription }
+                    }
+                }
+                Button("清空…") { confirmClear = true }.disabled(usage.records.isEmpty)
+            }
+            if usage.records.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "clock").font(.system(size: 28)).foregroundStyle(ConsoleTheme.secondary)
+                    Text(usage.enabled ? "完成一次听写后，会在这里显示记录。" : "本地记录尚未开启。")
+                        .font(.system(size: 13)).foregroundStyle(ConsoleTheme.secondary)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(Array(usage.records.reversed().prefix(30))) { record in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text((VoiceInputMethod(rawValue: record.service)?.title ?? record.service) + " · " + record.application.name)
+                                        .font(.system(size: 13, weight: .medium))
+                                    Text(record.attemptedAt.formatted(date: .abbreviated, time: .shortened) + " · " + (record.source == "remote" ? "遥控器" : "键盘") + " · " + actionTitle(record.action))
+                                        .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 5) {
+                                    Text(record.duration.map { String(format: "%.1f 秒", $0) } ?? "—")
+                                    Text(outcomeTitle(record.outcome)).font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+                                }
+                            }.padding(12).background(panelBackground(ConsoleTheme.surface, radius: 10))
+                        }
+                    }
+                }
+            }
+            if let error = usage.error { Text(error).font(.system(size: 11)).foregroundStyle(.orange) }
+            if let exportMessage { Text(exportMessage).font(.system(size: 11)) }
+            Text("归因以开始听写时的前台应用为准；时长包含停顿，不代表实际说话时长。")
+                .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+        }
+        .confirmationDialog("清空所有本地使用记录？", isPresented: $confirmClear) {
+            Button("清空记录", role: .destructive) { usage.clear() }
+        }
+    }
+    private func actionTitle(_ action: String) -> String {
+        let parts = action.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let remote = SupportedRemoteID(rawValue: parts[0]),
+              let button = RemoteProfiles.buttons(for: remote).first(where: { $0.id == parts[1] }) else { return "快捷键" }
+        return (remote == .chromecast ? "Chromecast" : "X6") + " · " + button.title
+    }
+    private func outcomeTitle(_ outcome: String) -> String {
+        switch outcome {
+        case "completed": "已完成"
+        case "switched": "已切换服务"
+        case "startFailed": "未确认启动"
+        case "recording": "听写中"
+        case "starting": "正在启动"
+        case "interrupted": "已中断"
+        case "serviceDisabled": "服务已停用"
+        case "remoteDisconnected": "遥控器已断开"
+        case "statisticsDisabled": "统计已关闭"
+        default: outcome
+        }
+    }
+}
+
 private struct KeyMappingView: View {
     @ObservedObject var model: ConsoleViewModel
     @ObservedObject private var mappings = RemoteMappingStore.shared
     @State private var selectedDevice: SupportedRemoteID = .chromecast
-    @State private var showVoiceRecorder = CommandLine.arguments.contains("--voice-shortcut-demo")
-
     var body: some View {
-        VStack(spacing: 14) {
-            triggerPanel
-                .frame(height: 138)
-            HStack(spacing: 14) {
-                devicePanel
-                    .frame(width: 238)
+        VStack(spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("一个按钮，一项输入服务").font(.system(size: 16, weight: .semibold))
+                    Text("只列出已启用的服务；也可选择常用动作或录制自定义按键。")
+                        .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+                }
+                Spacer()
+                Button("管理输入服务") { model.selectedPage = .services }
+            }.padding(14).background(panelBackground(ConsoleTheme.surface, radius: 14))
+            if !model.voiceActionStatus.isEmpty {
+                Text(model.voiceActionStatus).font(.system(size: 11)).foregroundStyle(ConsoleTheme.green)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 12) {
+                devicePanel.frame(width: 155)
                 mappingPanel
             }
         }
-        .sheet(isPresented: $showVoiceRecorder) {
-            KeyboardShortcutCaptureView(
-                buttonTitle: L10n.text("语音输入触发键", "Voice trigger"),
-                onCancel: { showVoiceRecorder = false },
-                onSave: { shortcut in
-                    model.setInputTrigger(shortcut)
-                    showVoiceRecorder = false
-                }
-            )
-        }
     }
 
-    private var triggerPanel: some View {
-        HStack(spacing: 18) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 7) {
-                    Image(systemName: "waveform.badge.mic")
-                        .foregroundStyle(ConsoleTheme.green)
-                    Text(L10n.text("语音软件与快捷键", "Voice app & shortcut"))
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(ConsoleTheme.text)
-                }
-                Text(L10n.text(
-                    "选择软件用于检测录音状态；不会替你切换输入法。点击右侧录制快捷键，与该软件的语音快捷键保持一致。",
-                    "The app choice selects recording-state detection, not the keyboard input source. Record the same shortcut configured in your voice app."
-                ))
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(ConsoleTheme.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 10)
-            VStack(alignment: .trailing, spacing: 7) {
-                Picker(
-                    L10n.text("语音输入法", "Voice input method"),
-                    selection: Binding(
-                        get: { model.voiceInputMethod },
-                        set: model.setVoiceInputMethod
-                    )
-                ) {
-                    ForEach(VoiceInputMethod.allCases) { method in
-                        Text(method.title).tag(method)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 158)
-                .disabled(model.remoteStreaming || model.doubaoIsRecording)
-                Button { showVoiceRecorder = true } label: {
-                    HStack(spacing: 8) {
-                        Text(model.voiceShortcut.label).lineLimit(1)
-                        Image(systemName: "keyboard")
-                    }
-                    .frame(minWidth: 150)
-                }
-                .buttonStyle(ConsoleButtonStyle(tone: .neutral))
-                .disabled(model.remoteStreaming || model.doubaoIsRecording)
-                Text((model.remoteStreaming || model.doubaoIsRecording)
-                    ? L10n.text("录音结束后可修改", "Stop recording to change")
-                    : L10n.text("点击录制 · 区分左右键", "Click to record · left/right keys"))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(ConsoleTheme.secondary)
-            }
-        }
-        .padding(.horizontal, 19)
-        .background(panelBackground(ConsoleTheme.surface, radius: 17))
+    private var sortedButtons: [RemoteButtonDefinition] {
+        let priority = ["voice", "0F", "0E"]
+        return RemoteProfiles.buttons(for: selectedDevice).enumerated().sorted {
+            (priority.firstIndex(of: $0.element.id) ?? ($0.offset + 10)) <
+            (priority.firstIndex(of: $1.element.id) ?? ($1.offset + 10))
+        }.map(\.element)
     }
 
     private var devicePanel: some View {
@@ -915,7 +1038,7 @@ private struct KeyMappingView: View {
                 .foregroundStyle(ConsoleTheme.secondary)
 
             DeviceSelectionRow(
-                title: SupportedRemoteID.chromecast.title,
+                title: "Chromecast",
                 signature: SupportedRemoteID.chromecast.signature,
                 connected: model.chromecastConnected,
                 selected: selectedDevice == .chromecast
@@ -948,10 +1071,10 @@ private struct KeyMappingView: View {
         HStack(spacing: 14) {
             VStack(spacing: 10) {
                 RemoteProductImage(kind: selectedDevice)
-                    .frame(width: 128)
+                    .frame(width: 78)
                 Text(selectedDevice == .chromecast
-                    ? L10n.text("14 个可映射键", "14 mappable buttons")
-                    : L10n.text("15 个正面可映射键", "15 mappable front buttons"))
+                    ? L10n.text("15 个可映射键", "15 mappable buttons")
+                    : L10n.text("16 个正面可映射键", "16 mappable front buttons"))
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(ConsoleTheme.secondary)
                     .multilineTextAlignment(.center)
@@ -967,7 +1090,7 @@ private struct KeyMappingView: View {
                 Spacer()
             }
             .padding(.top, 14)
-            .frame(width: 130)
+            .frame(width: 80)
             Divider().overlay(ConsoleTheme.lineSoft)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -993,7 +1116,7 @@ private struct KeyMappingView: View {
                 Divider().overlay(ConsoleTheme.lineSoft)
                 ScrollView {
                     LazyVStack(spacing: 6) {
-                        ForEach(RemoteProfiles.buttons(for: selectedDevice)) { button in
+                        ForEach(sortedButtons) { button in
                             MappingRow(
                                 remote: selectedDevice,
                                 button: button,
@@ -1005,7 +1128,7 @@ private struct KeyMappingView: View {
                 HStack {
                     if !mappings.isEnabled(selectedDevice) {
                         Label(
-                            L10n.text("未启用时保持系统原行为", "System behavior is unchanged"),
+                            L10n.text("开启后应用自定义映射；语音键默认仍可用", "Enable custom mappings; voice key works by default"),
                             systemImage: "info.circle"
                         )
                         .font(.system(size: 10.5))
@@ -1073,29 +1196,39 @@ private struct DeviceSelectionRow: View {
 
 private struct MappingRow: View {
     @ObservedObject private var mappings = RemoteMappingStore.shared
+    @ObservedObject private var services = VoiceServiceStore.shared
     @State private var showRecorder = false
     let remote: SupportedRemoteID
     let button: RemoteButtonDefinition
     let enabled: Bool
+
+    private var availableTargets: [RemoteMappingTarget] {
+        let current = mappings.target(for: button, remote: remote)
+        var targets = RemoteMappingTarget.allCases.filter { target in
+            target != .doubaoVoice && (target.voiceService.map { services.isUsable($0) } ?? true)
+        }
+        if !targets.contains(current) { targets.insert(current, at: 1) }
+        return targets
+    }
+
+    private var serviceDisabled: Bool {
+        mappings.target(for: button, remote: remote).voiceService.map { !services.isUsable($0) } ?? false
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: button.symbol)
                 .frame(width: 18)
                 .foregroundStyle(button.voiceControlled ? ConsoleTheme.green : ConsoleTheme.secondary)
-            Text(button.title)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(ConsoleTheme.text)
-                .frame(width: 76, alignment: .leading)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(button.title).font(.system(size: 11.5, weight: .medium)).foregroundStyle(ConsoleTheme.text)
+                if serviceDisabled { Text("服务已停用").font(.system(size: 9)).foregroundStyle(.orange) }
+            }.frame(width: 76, alignment: .leading)
             Spacer(minLength: 4)
             if !button.remappable {
                 Text(L10n.text("设备内部功能", "Device-only function"))
                     .font(.system(size: 11))
                     .foregroundStyle(ConsoleTheme.tertiary)
-            } else if button.voiceControlled {
-                Text(RemoteMappingTarget.doubaoVoice.title)
-                    .font(.system(size: 11))
-                    .foregroundStyle(ConsoleTheme.green)
             } else {
                 HStack(spacing: 4) {
                     Picker(
@@ -1111,16 +1244,16 @@ private struct MappingRow: View {
                             }
                         )
                     ) {
-                        ForEach(RemoteMappingTarget.allCases.filter { $0 != .doubaoVoice }) { target in
+                        ForEach(availableTargets) { target in
                             Text(
-                                target == .custom
+                                target == .custom && target == mappings.target(for: button, remote: remote)
                                     ? mappings.targetTitle(for: button, remote: remote)
                                     : target.title
                             ).tag(target)
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 126)
+                    .frame(width: 150)
                     Button(L10n.text("录制", "Record")) { showRecorder = true }
                     .font(.system(size: 11, weight: .medium))
                     .buttonStyle(.plain)
@@ -1130,11 +1263,17 @@ private struct MappingRow: View {
                 }
             }
         }
-        .frame(height: 28)
+        .disabled(!enabled && button.remappable)
+        .frame(height: serviceDisabled ? 36 : 28)
         .padding(.horizontal, 9)
         .background(ConsoleTheme.surface2)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .accessibilityElement(children: .combine)
+        .onAppear {
+            #if DEBUG
+            if button.id == "0B", CommandLine.arguments.contains("--review-mapping-capture") { showRecorder = true }
+            #endif
+        }
         .sheet(isPresented: $showRecorder) {
             KeyboardShortcutCaptureView(
                 buttonTitle: button.title,
@@ -1240,7 +1379,7 @@ private final class KeyboardCaptureNSView: NSView {
             guard let self, let window = self.window else { return }
             window.makeFirstResponder(self)
             #if DEBUG
-            if CommandLine.arguments.contains("--voice-shortcut-demo") {
+            if CommandLine.arguments.contains("--voice-shortcut-demo") || CommandLine.arguments.contains("--review-capture-result") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     for event in RemoteCustomShortcut.rightCommand.events(isDown: true) {
                         self?.capture(type: event.type, event: event)
@@ -1250,6 +1389,7 @@ private final class KeyboardCaptureNSView: NSView {
                     }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in
+                    guard CommandLine.arguments.contains("--voice-shortcut-demo") else { return }
                     if let escape = CGEvent(keyboardEventSource: nil, virtualKey: 0x35, keyDown: true) {
                         self?.capture(type: .keyDown, event: escape)
                     }
@@ -1905,3 +2045,75 @@ private func panelBackground(_ color: Color, radius: CGFloat) -> some View {
         .fill(color)
         .overlay(RoundedRectangle(cornerRadius: radius).stroke(ConsoleTheme.line, lineWidth: 1))
 }
+
+#if DEBUG
+enum P1UIReview {
+    @MainActor static func run(app: NSApplication) {
+        let scene = CommandLine.arguments.first { $0.hasPrefix("--scene=") }?.replacingOccurrences(of: "--scene=", with: "") ?? "services"
+        AirTypeEnvironment.defaults = UserDefaults(suiteName: "AirType.UIReview.\(ProcessInfo.processInfo.processIdentifier)")!
+        AirTypeEnvironment.usageFile = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("AirType-UIReview-\(ProcessInfo.processInfo.processIdentifier)/sessions.json")
+        let services = VoiceServiceStore.shared
+        let mappings = RemoteMappingStore.shared
+        if ["enabled", "mapping", "disabled", "usage", "guard", "switch-failed"].contains(scene) {
+            let shortcut = RemoteCustomShortcut(keyCode: 0x02, flags: CGEventFlags.maskCommand.union(.maskShift).rawValue,
+                                                label: "Left Cmd + Left Shift + D", modifierKeyCodes: [0x37, 0x38])
+            _ = services.setShortcut(shortcut, for: .codex); _ = services.setEnabled(true, for: .codex)
+            mappings.setEnabled(true, for: .chromecast)
+            let netflix = RemoteProfiles.chromecastButtons.first { $0.id == "0F" }!
+            mappings.setTarget(.codexVoice, for: netflix, remote: .chromecast)
+            let youtube = RemoteProfiles.chromecastButtons.first { $0.id == "0E" }!
+            mappings.setCustomShortcut(.init(keyCode: 0x09, flags: CGEventFlags.maskCommand.rawValue,
+                                            label: "Left Cmd + V", modifierKeyCodes: [0x37]), for: youtube, remote: .chromecast)
+            if scene == "disabled" { _ = services.setEnabled(false, for: .codex) }
+        }
+        let model = ConsoleViewModel()
+        model.selectedPage = ["mapping", "disabled"].contains(scene) ? .mapping : (scene == "usage" || scene == "usage-off" ? .usage : .services)
+        model.status = "测试场景"; model.chromecastConnected = true
+        model.hidConnected = true; model.bleConnected = true; model.driverAvailable = true
+        model.microphoneGranted = true; model.accessibilityGranted = true
+        model.inputMonitoringGranted = true; model.bluetoothGranted = true
+        model.onDemandAudio = true; model.macInputEnabled = false
+        if scene == "unconfigured" { _ = services.setEnabled(true, for: .codex) }
+        if scene == "guard" { model.voiceActionStatus = "请先将 Codex 窗口置于前台，再启动听写。" }
+        if scene == "switch-failed" { model.voiceActionStatus = "上一项听写未确认停止；已取消切换。" }
+        if scene == "usage" {
+            let usage = LocalUsageStore.shared; usage.setEnabled(true)
+            let id = usage.begin(service: .typeless, source: "remote", action: "chromecast.voice", application: .init(bundleID: "com.apple.Notes", name: "备忘录"))
+            usage.confirm(id); usage.finish(id, outcome: "completed")
+            let id2 = usage.begin(service: .codex, source: "remote", action: "chromecast.0F", application: .init(bundleID: "com.openai.codex", name: "Codex"))
+            usage.finish(id2, outcome: "startFailed")
+        }
+        app.setActivationPolicy(.regular)
+        let view = StudioMixerView(model: model)
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 120, width: 775, height: 700),
+                              styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        window.title = "AirType · P1 界面测试"
+        window.contentView = NSHostingView(rootView: view)
+        window.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true)
+        FileHandle.standardError.write(Data("[P1-UI] ready scene=\(scene) window=\(window.windowNumber)\n".utf8))
+        if let path = CommandLine.arguments.first(where: { $0.hasPrefix("--review-output=") })?.replacingOccurrences(of: "--review-output=", with: "") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                let capture = Process(); capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                capture.arguments = ["-x", "-o", "-l", String((window.attachedSheet ?? window).windowNumber), path]
+                do { try capture.run(); capture.waitUntilExit() } catch { print(error) }
+                if !FileManager.default.fileExists(atPath: path), let view = (window.attachedSheet ?? window).contentView,
+                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                    view.cacheDisplay(in: view.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                    FileHandle.standardError.write(Data("[P1-UI] captured native content bitmap (screen unavailable)\n".utf8))
+                }
+                FileHandle.standardError.write(Data("[P1-UI] captured scene=\(scene)\n".utf8))
+                app.stop(nil)
+                // Wake AppKit so stop returns without requiring a mouse/keyboard event.
+                app.postEvent(NSEvent.otherEvent(with: .applicationDefined, location: .zero,
+                    modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)!, atStart: false)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { app.stop(nil) }
+        app.run()
+        window.orderOut(nil)
+        AirTypeEnvironment.defaults.removePersistentDomain(forName: "AirType.UIReview.\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.removeItem(at: AirTypeEnvironment.usageFile.deletingLastPathComponent())
+    }
+}
+#endif

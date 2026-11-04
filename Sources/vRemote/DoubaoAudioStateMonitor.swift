@@ -31,6 +31,8 @@ final class DoubaoAudioStateMonitor {
         }
     }
 
+    var methodProvider: () -> VoiceInputMethod = { VoiceInputMethod.current }
+
     private static let targetDeviceName = "vRemoteDr 2ch"
 
     private var helperPoll: Timer?
@@ -72,7 +74,7 @@ final class DoubaoAudioStateMonitor {
         }
         refreshBindingAndPublish(force: true)
         helperPoll = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
-            guard VoiceInputMethod.current.usesHelperProcesses else { return }
+            guard self?.methodProvider().usesHelperProcesses == true else { return }
             self?.refreshBindingAndPublish(force: false)
         }
     }
@@ -115,7 +117,7 @@ final class DoubaoAudioStateMonitor {
     }
 
     private func refreshBindingIfNeeded() {
-        let targetBundleID = VoiceInputMethod.current.bundleIdentifier
+        let targetBundleID = methodProvider().bundleIdentifier
         if boundBundleID != targetBundleID {
             unbindProcessObject()
             boundBundleID = targetBundleID
@@ -207,7 +209,7 @@ final class DoubaoAudioStateMonitor {
            !snapshot.inputDeviceNames.contains(Self.targetDeviceName)
         {
             print(
-                "[DOUBAO-STATE] ⚠️ \(VoiceInputMethod.current.shortName)" +
+                "[DOUBAO-STATE] ⚠️ \(methodProvider().shortName)" +
                 "正在录音，但实际输入不是 " +
                 Self.targetDeviceName
             )
@@ -216,7 +218,7 @@ final class DoubaoAudioStateMonitor {
     }
 
     private func readCurrentSnapshot() -> Snapshot {
-        if VoiceInputMethod.current.usesHelperProcesses { return readHelperSnapshot() }
+        if methodProvider().usesHelperProcesses { return readHelperSnapshot() }
         guard processObjectID != kAudioObjectUnknown else {
             return Snapshot(
                 state: .unavailable,
@@ -259,7 +261,7 @@ final class DoubaoAudioStateMonitor {
     /// Electron voice apps may capture from a Helper instead of their UI
     /// process. Match only the selected bundle and its namespaced helpers.
     private func readHelperSnapshot() -> Snapshot {
-        let method = VoiceInputMethod.current
+        let method = methodProvider()
         let objects = Self.objectListProperty(
             object: AudioObjectID(kAudioObjectSystemObject),
             selector: kAudioHardwarePropertyProcessObjectList,

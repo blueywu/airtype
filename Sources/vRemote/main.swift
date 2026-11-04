@@ -38,10 +38,17 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let x6 = X6HIDBridge()
     private let chromecastHID = ChromecastRemoteHIDBridge()
     private let x6SearchSuppressor = X6SearchSuppressor()
-    private let doubaoAudioState = DoubaoAudioStateMonitor()
-    private lazy var x6Session = X6SessionCoordinator(
-        doubaoState: doubaoAudioState
+    private let doubaoAudioState = VoiceAudioHub(selected: VoiceServiceStore.shared.available.first ?? .typeless)
+    private lazy var x6Session: X6SessionCoordinator = X6SessionCoordinator(
+        doubaoState: doubaoAudioState,
+        triggerTap: { [weak self] in self?.voiceActions.postCurrentShortcut() },
+        openingTimeout: { [weak self] in self?.doubaoAudioState.selected.openingTimeout ?? 3 },
+        canAdoptExternal: { [weak self] in
+            guard let self else { return false }
+            return VoiceServiceStore.shared.isUsable(self.doubaoAudioState.selected)
+        }
     )
+    private lazy var voiceActions: VoiceActionRouter = VoiceActionRouter(hub: doubaoAudioState, session: x6Session)
     private let debugWindow = DebugWindowController()
     private let x6BLE = BLEBridge(
         nameHint: "X6-Remote",
@@ -73,7 +80,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         print("[APP] ===== AirType \(appVersion) started =====")
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let statusImage = LogoAsset.image.copy() as? NSImage
+        let statusImage: NSImage? = WaveformIcon.image
         statusImage?.size = NSSize(width: 18, height: 18)
         statusItem.button?.image = statusImage
         statusItem.button?.imagePosition = .imageOnly
@@ -110,31 +117,32 @@ final class AppController: NSObject, NSApplicationDelegate {
         // X6 HID observation and ATVV audio are independent connections.
         x6.onConnectionChanged = { [weak self] connected in
             self?.x6HIDConnected = connected
+            if !connected { RemoteMappingStore.shared.releaseAll(for: .x6) }
             self?.updateStatus()
         }
         // X6 does not emit a dependable HID edge on its first short press.
         // HID remains observation/search-suppression only; immediate voice
         // session control comes from AUDIO_START/AUDIO_STOP below.
         x6.onShortPress = { [weak self] in
-            self?.x6Session.remoteHIDShortPress()
+            self?.voiceActions.remoteHIDShortPress()
         }
         x6.onLongPressEnded = { [weak self] in
-            self?.x6Session.remoteHIDLongPressEnded()
+            self?.voiceActions.remoteHIDLongPressEnded()
         }
         x6.onNativeSearchEdge = { [weak self] in
             self?.x6SearchSuppressor.arm()
         }
-        x6SearchSuppressor.onTriggerDownObserved = { [weak self] synthetic in
-            self?.x6Session.triggerDownObserved(isSynthetic: synthetic)
+        x6SearchSuppressor.onServiceDown = { [weak self] method in
+            self?.voiceActions.keyboardDown(method) ?? false
         }
-        x6SearchSuppressor.onTriggerUpObserved = { [weak self] synthetic in
-            self?.x6Session.triggerUpObserved(isSynthetic: synthetic)
+        x6SearchSuppressor.onServiceUp = { [weak self] method in
+            self?.voiceActions.keyboardUp(method)
         }
         x6BLE.onConnectionChanged = { [weak self] connected in
             self?.x6BLEConnected = connected
             if !connected {
                 self?.x6RemoteStreaming = false
-                self?.x6Session.remoteDisconnected(.x6)
+                self?.voiceActions.remoteDisconnected(.x6)
             }
             self?.refreshCombinedStreaming()
             self?.updateStatus()
@@ -146,13 +154,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         x6BLE.onAudioStarted = { [weak self] reason, _ in
             self?.lastVoiceRemote = .x6
-            self?.x6Session.remoteAudioStarted(
+            self?.voiceActions.remoteAudioStarted(
                 remote: .x6,
                 reason: reason
             )
         }
         x6BLE.onAudioStopped = { [weak self] reason in
-            self?.x6Session.remoteAudioStopped(remote: .x6, reason: reason)
+            self?.voiceActions.remoteAudioStopped(remote: .x6, reason: reason)
         }
         x6BLE.onMicrophoneOpenFailed = { [weak self] code in
             self?.x6Session.remoteMicrophoneOpenFailed(
@@ -166,13 +174,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         chromecastHID.onConnectionChanged = { [weak self] connected in
             self?.chromecastHIDConnected = connected
+            if !connected { RemoteMappingStore.shared.releaseAll(for: .chromecast) }
             self?.updateStatus()
         }
         chromecastBLE.onConnectionChanged = { [weak self] connected in
             self?.chromecastBLEConnected = connected
             if !connected {
                 self?.chromecastRemoteStreaming = false
-                self?.x6Session.remoteDisconnected(.chromecast)
+                self?.voiceActions.remoteDisconnected(.chromecast)
             }
             self?.refreshCombinedStreaming()
             self?.updateStatus()
@@ -184,14 +193,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         chromecastBLE.onAudioStarted = { [weak self] reason, _ in
             self?.lastVoiceRemote = .chromecast
-            self?.x6Session.remoteAudioStarted(
+            self?.voiceActions.remoteAudioStarted(
                 remote: .chromecast,
                 reason: reason,
                 supportsPhysicalHoldGesture: true
             )
         }
         chromecastBLE.onAudioStopped = { [weak self] reason in
-            self?.x6Session.remoteAudioStopped(
+            self?.voiceActions.remoteAudioStopped(
                 remote: .chromecast,
                 reason: reason
             )
@@ -235,12 +244,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         x6Session.onStateChanged = { [weak self] status in
             self?.updateStatus()
         }
-        // Persist the auto-detected input method so later lookups are cheap
-        // and stable, then route the system input if that method needs it.
-        let voiceInputMethod = VoiceInputMethod.current
-        VoiceInputMethod.select(voiceInputMethod)
-        print("[VOICE-IME] using \(voiceInputMethod.title)")
-        SystemInputRoute.apply(for: voiceInputMethod)
+        voiceActions.onStatus = { [weak self] text in
+            self?.debugWindow.updateVoiceActionStatus(text)
+            self?.updateStatus()
+        }
+        voiceActions.start()
+        SystemInputRoute.apply(for: doubaoAudioState.selected)
         x6Session.start()
         x6SearchSuppressor.start()
         x6.start()
@@ -269,7 +278,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let doubaoUsesVRemote = doubaoSnapshot.inputDeviceNames.contains("vRemoteDr 2ch")
         let statusText: String
         if doubaoSnapshot.isRecording && !doubaoUsesVRemote {
-            let name = VoiceInputMethod.current.shortName
+            let name = doubaoAudioState.selected.shortName
             statusText = L10n.text("\(name)输入设备错误", "Incorrect \(name) input")
         } else if remoteStreaming {
             statusText = L10n.text("遥控器录音中", "Remote recording")
@@ -281,6 +290,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             statusText = L10n.text("等待遥控器", "Waiting for remote")
         }
         statusItem.button?.toolTip = "AirType · \(statusText)"
+        debugWindow.updateActiveService(doubaoAudioState.selected)
         debugWindow.update(
             status: statusText,
             hidConnected: anyHID,
@@ -333,14 +343,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             self?.updateStatus()
         }
         debugWindow.onInputTriggerChanged = { [weak self] in
-            self?.x6Session.forceClose()
             self?.x6SearchSuppressor.triggerConfigurationDidChange()
-        }
-        debugWindow.onVoiceInputMethodChanged = { [weak self] method in
-            print("[VOICE-IME] switched to \(method.title)")
-            SystemInputRoute.apply(for: method)
-            self?.doubaoAudioState.targetDidChange()
-            self?.updateStatus()
         }
         debugWindow.onRemoteMappingEnabledChanged = { [weak self] remote, enabled in
             switch remote {
@@ -445,6 +448,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         x6.stop()
         chromecastHID.stop()
         x6SearchSuppressor.stop()
+        voiceActions.stop()
         x6Session.stop()
         x6BLE.stop()
         chromecastBLE.stop()
@@ -456,6 +460,9 @@ final class AppController: NSObject, NSApplicationDelegate {
 // MARK: - Entry
 
 #if DEBUG
+if CommandLine.arguments.contains("--voice-actions-self-test") {
+    exit(VoiceActionsSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
+}
 if CommandLine.arguments.contains("--audio-lifecycle-self-test") {
     exit(AudioLifecycleSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
 }
@@ -468,6 +475,12 @@ if CommandLine.arguments.contains("--voice-session-self-test") {
 #endif
 
 let app = NSApplication.shared
+#if DEBUG
+if CommandLine.arguments.contains("--p1-ui-review") {
+    MainActor.assumeIsolated { P1UIReview.run(app: app) }
+    exit(EXIT_SUCCESS)
+}
+#endif
 let delegate = AppController()
 app.delegate = delegate
 

@@ -9,10 +9,11 @@ import Foundation
 final class X6SearchSuppressor {
     private var tapPort: CFMachPort?
     private var armedUntil = Date.distantPast
-    private var shortcutMatcher = VoiceShortcutMatcher()
+    private var shortcutMatchers: [VoiceInputMethod: VoiceShortcutMatcher] = [:]
+    private var consumed = Set<VoiceInputMethod>()
+    var onServiceDown: ((VoiceInputMethod) -> Bool)?
+    var onServiceUp: ((VoiceInputMethod) -> Void)?
     private(set) var isAvailable = false
-    var onTriggerDownObserved: ((Bool) -> Void)?
-    var onTriggerUpObserved: ((Bool) -> Void)?
     // X6 can deliver the HID report roughly a second before macOS emits the
     // corresponding native Search action. Keep the gate open long enough for
     // that delayed event, while still limiting suppression to the current
@@ -54,7 +55,7 @@ final class X6SearchSuppressor {
             }
 
             if ShortcutCaptureSession.consume(type, event) {
-                suppressor.shortcutMatcher.reset()
+                suppressor.shortcutMatchers = [:]; suppressor.consumed = []
                 return nil
             }
 
@@ -78,9 +79,9 @@ final class X6SearchSuppressor {
             let isSearchKey =
                 (type == .keyDown || type == .keyUp) && keyCode == 0xB1
             let isSearchSystemEvent = type.rawValue == 14
-            let trigger = AppStorage.voiceShortcut
-            let isDelayedX6Trigger = type == .flagsChanged
-                && trigger.keys.contains(UInt16(keyCode))
+            let isDelayedX6Trigger = type == .flagsChanged && VoiceServiceStore.shared.available.contains { method in
+                VoiceServiceStore.shared.profile(method).shortcut?.keys.contains(UInt16(keyCode)) == true
+            }
             if isArmed && (
                 isSearchKey || isSearchSystemEvent || isDelayedX6Trigger
             ) {
@@ -91,11 +92,7 @@ final class X6SearchSuppressor {
                 return nil
             }
 
-            suppressor.observeTriggerEvent(
-                type: type,
-                event: event,
-                isSynthetic: false
-            )
+            if suppressor.observeTriggerEvent(type: type, event: event) { return nil }
             return Unmanaged.passRetained(event)
         }
 
@@ -129,31 +126,36 @@ final class X6SearchSuppressor {
     }
 
     func triggerConfigurationDidChange() {
-        shortcutMatcher.reset()
-        print("[INPUT-TRIGGER] listening for \(AppStorage.voiceShortcut.label)")
+        shortcutMatchers = [:]; consumed = []
+        print("[INPUT-TRIGGER] refreshed enabled service shortcuts")
     }
 
     func stop() {
         armedUntil = .distantPast
-        shortcutMatcher.reset()
+        shortcutMatchers = [:]; consumed = []
         if let tapPort {
             CGEvent.tapEnable(tap: tapPort, enable: false)
         }
         tapPort = nil
     }
 
-    private func observeTriggerEvent(
-        type: CGEventType,
-        event: CGEvent,
-        isSynthetic: Bool
-    ) {
-        guard !isSynthetic else { return }
-        guard type == .keyDown || type == .keyUp || type == .flagsChanged else { return }
+    private func observeTriggerEvent(type: CGEventType, event: CGEvent) -> Bool {
+        guard type == .keyDown || type == .keyUp || type == .flagsChanged else { return false }
         let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        if let down = shortcutMatcher.consume(type: type, code: code, flags: event.flags,
-                                              shortcut: AppStorage.voiceShortcut) {
-            if down { onTriggerDownObserved?(false) }
-            else { onTriggerUpObserved?(false) }
+        var swallow = false
+        for service in VoiceServiceStore.shared.available {
+            guard let shortcut = VoiceServiceStore.shared.profile(service).shortcut else { continue }
+            var matcher = shortcutMatchers[service] ?? VoiceShortcutMatcher()
+            if let down = matcher.consume(type: type, code: code, flags: event.flags, shortcut: shortcut) {
+                if down {
+                    if onServiceDown?(service) == true { consumed.insert(service); swallow = true }
+                } else {
+                    if consumed.remove(service) != nil { swallow = true }
+                    else { onServiceUp?(service) }
+                }
+            } else if consumed.contains(service), shortcut.keys.contains(code) { swallow = true }
+            shortcutMatchers[service] = matcher
         }
+        return swallow
     }
 }

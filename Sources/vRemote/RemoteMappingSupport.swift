@@ -97,7 +97,11 @@ enum RemoteProfiles {
 
 enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable {
     case disabled
-    case doubaoVoice
+    case doubaoVoice // legacy global selection; resolved on read
+    case typelessVoice
+    case codexVoice
+    case wetypeVoice
+    case doubaoService
     case arrowUp
     case arrowDown
     case arrowLeft
@@ -127,11 +131,11 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
     var title: String {
         switch self {
         case .disabled: L10n.text("禁用", "Disabled")
-        // The case name stays `doubaoVoice`: it is persisted in mappings.
-        case .doubaoVoice: L10n.text(
-            "\(VoiceInputMethod.current.shortName)语音输入",
-            "\(VoiceInputMethod.current.shortName) Voice Input"
-        )
+        case .doubaoVoice: "旧版语音绑定"
+        case .typelessVoice: "Typeless"
+        case .codexVoice: "Codex 听写"
+        case .wetypeVoice: "微信输入法"
+        case .doubaoService: "豆包输入法"
         case .arrowUp: L10n.text("方向上", "Up Arrow")
         case .arrowDown: L10n.text("方向下", "Down Arrow")
         case .arrowLeft: L10n.text("方向左", "Left Arrow")
@@ -155,6 +159,25 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
         case .commandV: L10n.text("粘贴 (⌘V)", "Paste (⌘V)")
         case .commandZ: L10n.text("撤销 (⌘Z)", "Undo (⌘Z)")
         case .custom: L10n.text("录制任意按键…", "Record a key…")
+        }
+    }
+
+    var voiceService: VoiceInputMethod? {
+        switch self {
+        case .typelessVoice: .typeless
+        case .codexVoice: .codex
+        case .wetypeVoice: .wetype
+        case .doubaoService: .doubao
+        case .doubaoVoice: VoiceServiceStore.shared.legacyService
+        default: nil
+        }
+    }
+    static func voiceTarget(for service: VoiceInputMethod) -> Self {
+        switch service {
+        case .typeless: .typelessVoice
+        case .codex: .codexVoice
+        case .wetype: .wetypeVoice
+        case .doubao: .doubaoService
         }
     }
 
@@ -193,7 +216,7 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
     }
 
     func post(isDown: Bool) {
-        guard self != .disabled, self != .doubaoVoice else { return }
+        guard self != .disabled, voiceService == nil else { return }
         if let keyboard {
             let source = CGEventSource(stateID: .hidSystemState)
             guard let event = CGEvent(
@@ -231,21 +254,31 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
 }
 
 final class RemoteMappingStore: ObservableObject {
-    static let shared = RemoteMappingStore()
+    static let shared = RemoteMappingStore(defaults: AirTypeEnvironment.defaults)
 
     @Published private(set) var revision = 0
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+    private let services: VoiceServiceStore
+    var onVoiceAction: ((VoiceInputMethod, String, SupportedRemoteID) -> Void)?
+    var postAction: (RemoteMappingTarget, RemoteCustomShortcut?, Bool) -> Void = { target, shortcut, down in
+        if target == .custom { shortcut?.post(isDown: down) }
+        else { target.post(isDown: down) }
+    }
+    private var pressed: [String: (target: RemoteMappingTarget, shortcut: RemoteCustomShortcut?)] = [:]
     private let prefix = "remoteMapping."
     private let enabledPrefix = "remoteMappingEnabled."
     private let customPrefix = "remoteCustomMapping."
 
-    private init() {}
+    init(defaults: UserDefaults = .standard, services: VoiceServiceStore = .shared) {
+        self.defaults = defaults; self.services = services
+    }
 
     func isEnabled(_ remote: SupportedRemoteID) -> Bool {
         defaults.bool(forKey: enabledPrefix + remote.rawValue)
     }
 
     func setEnabled(_ enabled: Bool, for remote: SupportedRemoteID) {
+        if !enabled { releaseAll(for: remote) }
         defaults.set(enabled, forKey: enabledPrefix + remote.rawValue)
         revision += 1
     }
@@ -254,13 +287,12 @@ final class RemoteMappingStore: ObservableObject {
         for button: RemoteButtonDefinition,
         remote: SupportedRemoteID
     ) -> RemoteMappingTarget {
-        guard !button.voiceControlled else { return .doubaoVoice }
         guard button.remappable else { return .disabled }
         let key = prefix + remote.rawValue + "." + button.id
         guard let raw = defaults.string(forKey: key),
               let target = RemoteMappingTarget(rawValue: raw)
-        else { return button.defaultTarget }
-        return target
+        else { return button.defaultTarget == .doubaoVoice ? .voiceTarget(for: services.legacyService) : button.defaultTarget }
+        return target == .doubaoVoice ? .voiceTarget(for: services.legacyService) : target
     }
 
     func setTarget(
@@ -268,7 +300,7 @@ final class RemoteMappingStore: ObservableObject {
         for button: RemoteButtonDefinition,
         remote: SupportedRemoteID
     ) {
-        guard !button.voiceControlled, button.remappable else { return }
+        guard button.remappable else { return }
         defaults.set(
             target.rawValue,
             forKey: prefix + remote.rawValue + "." + button.id
@@ -306,6 +338,7 @@ final class RemoteMappingStore: ObservableObject {
            let shortcut = customShortcut(for: button, remote: remote) {
             return shortcut.label
         }
+        if let service = value.voiceService, !services.isUsable(service) { return value.title + " · 已停用" }
         return value.title
     }
 
@@ -314,11 +347,26 @@ final class RemoteMappingStore: ObservableObject {
         remote: SupportedRemoteID,
         isDown: Bool
     ) {
-        let value = target(for: button, remote: remote)
-        if value == .custom {
-            customShortcut(for: button, remote: remote)?.post(isDown: isDown)
+        let key = remote.rawValue + "." + button.id
+        let captured: (target: RemoteMappingTarget, shortcut: RemoteCustomShortcut?)
+        if isDown {
+            guard pressed[key] == nil else { return }
+            captured = (target(for: button, remote: remote), customShortcut(for: button, remote: remote))
+            pressed[key] = captured
         } else {
-            value.post(isDown: isDown)
+            guard let previous = pressed.removeValue(forKey: key) else { return }
+            captured = previous
+        }
+        if let service = captured.target.voiceService {
+            if isDown { onVoiceAction?(service, button.id, remote) }
+        } else {
+            postAction(captured.target, captured.shortcut, isDown)
+        }
+    }
+
+    func releaseAll(for remote: SupportedRemoteID) {
+        for button in RemoteProfiles.buttons(for: remote) where pressed[remote.rawValue + "." + button.id] != nil {
+            post(button: button, remote: remote, isDown: false)
         }
     }
 
