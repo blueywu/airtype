@@ -9,7 +9,7 @@ import Foundation
 final class X6SearchSuppressor {
     private var tapPort: CFMachPort?
     private var armedUntil = Date.distantPast
-    private var triggerKeysDown = Set<Int64>()
+    private var shortcutMatcher = VoiceShortcutMatcher()
     private(set) var isAvailable = false
     var onTriggerDownObserved: ((Bool) -> Void)?
     var onTriggerUpObserved: ((Bool) -> Void)?
@@ -53,13 +53,18 @@ final class X6SearchSuppressor {
                 return Unmanaged.passRetained(event)
             }
 
+            if ShortcutCaptureSession.consume(type, event) {
+                suppressor.shortcutMatcher.reset()
+                return nil
+            }
+
             let isSynthetic = event.getIntegerValueField(
                 .eventSourceUserData
             ) == Key.syntheticMarker
 
             if isSynthetic {
                 print(
-                    "[X6-FILTER] delivered synthetic Option " +
+                    "[X6-FILTER] delivered synthetic shortcut " +
                     "type=\(type.rawValue) " +
                     "flags=0x\(String(event.flags.rawValue, radix: 16))"
                 )
@@ -73,9 +78,9 @@ final class X6SearchSuppressor {
             let isSearchKey =
                 (type == .keyDown || type == .keyUp) && keyCode == 0xB1
             let isSearchSystemEvent = type.rawValue == 14
-            let trigger = AppStorage.inputTriggerKey
+            let trigger = AppStorage.voiceShortcut
             let isDelayedX6Trigger = type == .flagsChanged
-                && trigger.keyCodes.contains(keyCode)
+                && trigger.keys.contains(UInt16(keyCode))
             if isArmed && (
                 isSearchKey || isSearchSystemEvent || isDelayedX6Trigger
             ) {
@@ -124,13 +129,13 @@ final class X6SearchSuppressor {
     }
 
     func triggerConfigurationDidChange() {
-        triggerKeysDown.removeAll()
-        print("[INPUT-TRIGGER] listening for \(AppStorage.inputTriggerKey.title)")
+        shortcutMatcher.reset()
+        print("[INPUT-TRIGGER] listening for \(AppStorage.voiceShortcut.label)")
     }
 
     func stop() {
         armedUntil = .distantPast
-        triggerKeysDown.removeAll()
+        shortcutMatcher.reset()
         if let tapPort {
             CGEvent.tapEnable(tap: tapPort, enable: false)
         }
@@ -142,56 +147,13 @@ final class X6SearchSuppressor {
         event: CGEvent,
         isSynthetic: Bool
     ) {
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        // X6-generated Option events are handed to the coordinator directly
-        // before posting. Observing them again here would execute the same
-        // microphone transition twice.
         guard !isSynthetic else { return }
-        let trigger = AppStorage.inputTriggerKey
-        guard trigger.keyCodes.contains(keyCode) else { return }
-
-        // macOS normally reports modifier edges as `flagsChanged`, but on
-        // some keyboards/input-method paths the DOWN edge arrives as a plain
-        // `keyDown` while the release still arrives as `flagsChanged`. V1 only
-        // listened to flagsChanged, so Doubao opened but vRemote missed the
-        // transition and kept its audio route closed.
-        let isDown: Bool
-        switch type {
-        case .keyDown:
-            isDown = true
-        case .keyUp:
-            isDown = false
-        case .flagsChanged:
-            // When another Option key remains held, maskAlternate stays set
-            // even while this key is released. The per-key set is therefore
-            // a more reliable release signal than the aggregate flag alone.
-            if triggerKeysDown.contains(keyCode) {
-                isDown = false
-            } else {
-                guard event.flags.contains(trigger.flag) else {
-                    print(
-                        "[OPTION-RAW] orphan UP ignored keyCode=0x" +
-                        String(keyCode, radix: 16)
-                    )
-                    return
-                }
-                isDown = true
-            }
-        default:
-            return
-        }
-
-        print(
-            "[OPTION-RAW] type=\(type.rawValue) " +
-            "keyCode=0x\(String(keyCode, radix: 16)) " +
-            "edge=\(isDown ? "DOWN" : "UP")"
-        )
-        if isDown {
-            guard triggerKeysDown.insert(keyCode).inserted else { return }
-            onTriggerDownObserved?(isSynthetic)
-        } else {
-            guard triggerKeysDown.remove(keyCode) != nil else { return }
-            onTriggerUpObserved?(isSynthetic)
+        guard type == .keyDown || type == .keyUp || type == .flagsChanged else { return }
+        let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        if let down = shortcutMatcher.consume(type: type, code: code, flags: event.flags,
+                                              shortcut: AppStorage.voiceShortcut) {
+            if down { onTriggerDownObserved?(false) }
+            else { onTriggerUpObserved?(false) }
         }
     }
 }

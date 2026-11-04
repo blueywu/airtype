@@ -10,6 +10,8 @@ import Foundation
 enum VoiceInputMethod: String, CaseIterable, Identifiable {
     case doubao
     case wetype
+    case typeless
+    case codex
 
     var id: String { rawValue }
 
@@ -17,6 +19,8 @@ enum VoiceInputMethod: String, CaseIterable, Identifiable {
         switch self {
         case .doubao: "com.bytedance.inputmethod.doubaoime"
         case .wetype: "com.tencent.inputmethod.wetype"
+        case .typeless: "now.typeless.desktop"
+        case .codex: "com.openai.codex"
         }
     }
 
@@ -25,6 +29,8 @@ enum VoiceInputMethod: String, CaseIterable, Identifiable {
         switch self {
         case .doubao: L10n.text("豆包", "Doubao")
         case .wetype: L10n.text("微信输入法", "WeType")
+        case .typeless: "Typeless"
+        case .codex: L10n.text("Codex 听写", "Codex Dictation")
         }
     }
 
@@ -32,7 +38,16 @@ enum VoiceInputMethod: String, CaseIterable, Identifiable {
         switch self {
         case .doubao: L10n.text("豆包输入法", "Doubao Input Method")
         case .wetype: L10n.text("微信输入法", "WeType")
+        case .typeless: "Typeless"
+        case .codex: L10n.text("Codex 听写", "Codex Dictation")
         }
+    }
+
+    var usesHelperProcesses: Bool { self == .typeless || self == .codex }
+    var openingTimeout: TimeInterval { usesHelperProcesses ? 3.0 : 1.0 }
+
+    func matchesAudioBundle(_ bundleID: String) -> Bool {
+        bundleID == bundleIdentifier || (usesHelperProcesses && bundleID.hasPrefix(bundleIdentifier + "."))
     }
 
     var followsSystemDefaultInput: Bool { self == .wetype }
@@ -53,6 +68,7 @@ enum VoiceInputMethod: String, CaseIterable, Identifiable {
             return stored
         }
         if !doubao.isInstalled, wetype.isInstalled { return .wetype }
+        if !doubao.isInstalled, !wetype.isInstalled, typeless.isInstalled { return .typeless }
         return .doubao
     }
 

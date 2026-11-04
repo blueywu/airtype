@@ -507,6 +507,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.updateStatus()
         }
         debugWindow.onInputTriggerChanged = { [weak self] in
+            self?.x6Session.forceClose()
             self?.x6SearchSuppressor.triggerConfigurationDidChange()
         }
         debugWindow.onVoiceInputMethodChanged = { [weak self] method in
@@ -720,6 +721,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 // MARK: - Entry
 
 #if DEBUG
+if CommandLine.arguments.contains("--shortcut-self-test") {
+    exit(ShortcutSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
+}
 if CommandLine.arguments.contains("--voice-session-self-test") {
     exit(VoiceSessionSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
 }

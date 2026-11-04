@@ -57,7 +57,8 @@ enum VoiceSessionSelfTest {
                 doubaoState: doubao,
                 setRemoteRouteActive: { routeSink?($0) },
                 triggerTap: { triggerSink?() },
-                now: { nowSink?() ?? Date(timeIntervalSince1970: 0) }
+                now: { nowSink?() ?? Date(timeIntervalSince1970: 0) },
+                openingTimeout: { 1.0 }
             )
             routeSink = { [weak self] active in
                 self?.routeChanges.append(active)

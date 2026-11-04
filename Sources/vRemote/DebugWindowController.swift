@@ -16,6 +16,8 @@ enum PermissionKind: String, Identifiable, CaseIterable {
 
     var title: String {
         switch self {
+        case .doubaoInput where VoiceInputMethod.current.usesHelperProcesses:
+            L10n.text("\(VoiceInputMethod.current.shortName) 麦克风设置", "\(VoiceInputMethod.current.shortName) microphone")
         case .doubaoInput:
             VoiceInputMethod.current == .wetype
                 ? L10n.text("微信输入法麦克风设置", "WeType Microphone Setup")
@@ -43,6 +45,8 @@ enum PermissionKind: String, Identifiable, CaseIterable {
 
     var screenshotNames: [String] {
         switch self {
+        case .doubaoInput where VoiceInputMethod.current.usesHelperProcesses:
+            []
         case .doubaoInput where VoiceInputMethod.current == .wetype:
             // No bundled screenshots yet; the guide shows its placeholder.
             ["wetype-input0", "wetype-input1"]
@@ -62,6 +66,8 @@ enum PermissionKind: String, Identifiable, CaseIterable {
 
     var guidance: [String] {
         switch self {
+        case .doubaoInput where VoiceInputMethod.current.usesHelperProcesses:
+            return [L10n.text("在语音软件中选择 vRemoteDr 2ch 作为麦克风，并录制与软件设置相同的快捷键。", "Choose vRemoteDr 2ch in your voice app and record its matching shortcut.")]
         case .doubaoInput where VoiceInputMethod.current == .wetype:
             return [
                 L10n.text(
@@ -139,10 +145,11 @@ enum PermissionKind: String, Identifiable, CaseIterable {
         }
     }
 
-    var pageCount: Int { screenshotNames.count }
+    var pageCount: Int { max(1, screenshotNames.count) }
 
     func screenshotName(for page: Int) -> String {
-        screenshotNames[min(max(page, 0), pageCount - 1)]
+        guard !screenshotNames.isEmpty else { return "voice-input-settings" }
+        return screenshotNames[min(max(page, 0), pageCount - 1)]
     }
 }
 
@@ -269,7 +276,7 @@ private final class ConsoleViewModel: ObservableObject {
     @Published var bluetoothGranted = false
     @Published var x6Connected = false
     @Published var chromecastConnected = false
-    @Published var inputTriggerKey = AppStorage.inputTriggerKey
+    @Published var voiceShortcut = AppStorage.voiceShortcut
     @Published var voiceInputMethod = VoiceInputMethod.current
     @Published var activeModal: ConsoleModal?
     @Published var showX6MicHint = !UserDefaults.standard.bool(
@@ -290,10 +297,10 @@ private final class ConsoleViewModel: ObservableObject {
     var macSolo: Bool { macInputEnabled && !remoteInputEnabled }
     var remoteSolo: Bool { remoteInputEnabled && !macInputEnabled }
 
-    func setInputTrigger(_ trigger: InputTriggerKey) {
-        guard inputTriggerKey != trigger else { return }
-        inputTriggerKey = trigger
-        AppStorage.inputTriggerKey = trigger
+    func setInputTrigger(_ trigger: RemoteCustomShortcut) {
+        guard voiceShortcut != trigger else { return }
+        voiceShortcut = trigger
+        AppStorage.voiceShortcut = trigger
         onInputTriggerChanged?()
     }
 
@@ -301,6 +308,8 @@ private final class ConsoleViewModel: ObservableObject {
         guard voiceInputMethod != method else { return }
         voiceInputMethod = method
         VoiceInputMethod.select(method)
+        voiceShortcut = AppStorage.voiceShortcut
+        onInputTriggerChanged?()
         onVoiceInputMethodChanged?(method)
     }
 
@@ -363,6 +372,8 @@ private final class ConsoleViewModel: ObservableObject {
             if voiceInputMethod.followsSystemDefaultInput {
                 SystemInputRoute.routeToVRemote()
                 openSoundInputSettings()
+            } else if voiceInputMethod.usesHelperProcesses {
+                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: voiceInputMethod.bundleIdentifier) { NSWorkspace.shared.open(url) }
             } else {
                 openDoubaoSettings()
             }
@@ -868,16 +879,27 @@ private struct KeyMappingView: View {
     @ObservedObject var model: ConsoleViewModel
     @ObservedObject private var mappings = RemoteMappingStore.shared
     @State private var selectedDevice: SupportedRemoteID = .chromecast
+    @State private var showVoiceRecorder = CommandLine.arguments.contains("--voice-shortcut-demo")
 
     var body: some View {
         VStack(spacing: 14) {
             triggerPanel
-                .frame(height: 116)
+                .frame(height: 138)
             HStack(spacing: 14) {
                 devicePanel
                     .frame(width: 238)
                 mappingPanel
             }
+        }
+        .sheet(isPresented: $showVoiceRecorder) {
+            KeyboardShortcutCaptureView(
+                buttonTitle: L10n.text("语音输入触发键", "Voice trigger"),
+                onCancel: { showVoiceRecorder = false },
+                onSave: { shortcut in
+                    model.setInputTrigger(shortcut)
+                    showVoiceRecorder = false
+                }
+            )
         }
     }
 
@@ -887,13 +909,13 @@ private struct KeyMappingView: View {
                 HStack(spacing: 7) {
                     Image(systemName: "waveform.badge.mic")
                         .foregroundStyle(ConsoleTheme.green)
-                    Text(L10n.text("语音输入法与触发键", "Voice input method & trigger"))
+                    Text(L10n.text("语音软件与快捷键", "Voice app & shortcut"))
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(ConsoleTheme.text)
                 }
                 Text(L10n.text(
-                    "遥控器语音键与电脑键盘都使用这个按键控制\(model.voiceInputMethod.title)。这里必须与\(model.voiceInputMethod.title)中的语音快捷键保持一致。",
-                    "The remote voice key and Mac keyboard both use this trigger to control \(model.voiceInputMethod.title). It must match its voice shortcut."
+                    "选择软件用于检测录音状态；不会替你切换输入法。点击右侧录制快捷键，与该软件的语音快捷键保持一致。",
+                    "The app choice selects recording-state detection, not the keyboard input source. Record the same shortcut configured in your voice app."
                 ))
                     .font(.system(size: 12.5))
                     .foregroundStyle(ConsoleTheme.secondary)
@@ -914,33 +936,21 @@ private struct KeyMappingView: View {
                 }
                 .labelsHidden()
                 .frame(width: 158)
-                .disabled(model.remoteStreaming)
-                Picker(
-                    L10n.text("触发键", "Trigger"),
-                    selection: Binding(
-                        get: { model.inputTriggerKey },
-                        set: model.setInputTrigger
-                    )
-                ) {
-                    ForEach(InputTriggerKey.allCases) { trigger in
-                        Text(trigger.title).tag(trigger)
+                .disabled(model.remoteStreaming || model.doubaoIsRecording)
+                Button { showVoiceRecorder = true } label: {
+                    HStack(spacing: 8) {
+                        Text(model.voiceShortcut.label).lineLimit(1)
+                        Image(systemName: "keyboard")
                     }
+                    .frame(minWidth: 150)
                 }
-                .labelsHidden()
-                .frame(width: 158)
-                .disabled(model.remoteStreaming)
-                if model.inputTriggerKey == .function {
-                    Label(
-                        L10n.text("Fn 需在本机测试", "Test Fn on this Mac"),
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(ConsoleTheme.amber)
-                } else if model.remoteStreaming {
-                    Text(L10n.text("录音结束后可修改", "Stop recording to change"))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(ConsoleTheme.tertiary)
-                }
+                .buttonStyle(ConsoleButtonStyle(tone: .neutral))
+                .disabled(model.remoteStreaming || model.doubaoIsRecording)
+                Text((model.remoteStreaming || model.doubaoIsRecording)
+                    ? L10n.text("录音结束后可修改", "Stop recording to change")
+                    : L10n.text("点击录制 · 区分左右键", "Click to record · left/right keys"))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(ConsoleTheme.secondary)
             }
         }
         .padding(.horizontal, 19)
@@ -1212,9 +1222,7 @@ private struct KeyboardShortcutCaptureView: View {
                     .foregroundStyle(ConsoleTheme.secondary)
             }
 
-            KeyboardEventCaptureView { shortcut in
-                captured = shortcut
-            }
+            KeyboardEventCaptureView(onCapture: { captured = $0 }, onCancel: onCancel)
             .frame(height: 82)
             .overlay(
                 RoundedRectangle(cornerRadius: 13)
@@ -1228,7 +1236,7 @@ private struct KeyboardShortcutCaptureView: View {
                     Text(captured?.label ?? L10n.text("现在按下键盘按键", "Press a key now"))
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .foregroundStyle(captured == nil ? ConsoleTheme.secondary : ConsoleTheme.text)
-                    Text(L10n.text("支持 Command / Option / Control / Shift 组合", "Command / Option / Control / Shift are supported"))
+                    Text(L10n.text("支持左右修饰键、Fn 和组合键；Esc 取消", "Left/right modifiers, Fn and chords; Esc cancels"))
                         .font(.system(size: 10.5))
                         .foregroundStyle(ConsoleTheme.tertiary)
                 }
@@ -1238,10 +1246,9 @@ private struct KeyboardShortcutCaptureView: View {
             HStack {
                 Button(L10n.text("取消", "Cancel"), action: onCancel)
                 Spacer()
-                Button(L10n.text("保存映射", "Save Mapping")) {
+                Button(L10n.text("保存", "Save")) {
                     if let captured { onSave(captured) }
                 }
-                .keyboardShortcut(.defaultAction)
                 .disabled(captured == nil)
             }
         }
@@ -1254,79 +1261,83 @@ private struct KeyboardShortcutCaptureView: View {
 
 private struct KeyboardEventCaptureView: NSViewRepresentable {
     let onCapture: (RemoteCustomShortcut) -> Void
+    let onCancel: () -> Void
 
     func makeNSView(context: Context) -> KeyboardCaptureNSView {
         let view = KeyboardCaptureNSView()
         view.onCapture = onCapture
-        DispatchQueue.main.async {
-            view.window?.makeFirstResponder(view)
-        }
+        view.onCancel = onCancel
         return view
     }
-
-    func updateNSView(_ nsView: KeyboardCaptureNSView, context: Context) {
-        nsView.onCapture = onCapture
-        DispatchQueue.main.async {
-            nsView.window?.makeFirstResponder(nsView)
-        }
+    func updateNSView(_ view: KeyboardCaptureNSView, context: Context) {
+        view.onCapture = onCapture
+        view.onCancel = onCancel
+    }
+    static func dismantleNSView(_ view: KeyboardCaptureNSView, coordinator: ()) {
+        view.endCapture()
     }
 }
 
 private final class KeyboardCaptureNSView: NSView {
     var onCapture: ((RemoteCustomShortcut) -> Void)?
-
+    var onCancel: (() -> Void)?
+    private var recording = ShortcutRecording()
     override var acceptsFirstResponder: Bool { true }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        guard window != nil else { endCapture(); return }
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.window?.makeFirstResponder(self)
+            guard let self, let window = self.window else { return }
+            window.makeFirstResponder(self)
+            #if DEBUG
+            if CommandLine.arguments.contains("--voice-shortcut-demo") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    for event in RemoteCustomShortcut.rightCommand.events(isDown: true) {
+                        self?.capture(type: event.type, event: event)
+                    }
+                    for event in RemoteCustomShortcut.rightCommand.events(isDown: false) {
+                        self?.capture(type: event.type, event: event)
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in
+                    if let escape = CGEvent(keyboardEventSource: nil, virtualKey: 0x35, keyDown: true) {
+                        self?.capture(type: .keyDown, event: escape)
+                    }
+                }
+            }
+            #endif
+            ShortcutCaptureSession.handler = { [weak self] type, event in
+                guard let self, self.window?.isKeyWindow == true else { return false }
+                guard type == .keyDown || type == .keyUp || type == .flagsChanged else { return false }
+                self.capture(type: type, event: event)
+                return true
+            }
         }
     }
-
+    func endCapture() { ShortcutCaptureSession.handler = nil }
     override func keyDown(with event: NSEvent) {
-        guard !event.isARepeat else { return }
-        onCapture?(Self.shortcut(from: event))
+        guard !event.isARepeat, let cg = event.cgEvent else { return }
+        capture(type: .keyDown, event: cg)
     }
-
-    private static func shortcut(from event: NSEvent) -> RemoteCustomShortcut {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        var flags: CGEventFlags = []
-        var prefix = ""
-        if modifiers.contains(.control) {
-            flags.insert(.maskControl)
-            prefix += "⌃"
+    override func keyUp(with event: NSEvent) {}
+    override func flagsChanged(with event: NSEvent) {
+        guard let cg = event.cgEvent else { return }
+        capture(type: .flagsChanged, event: cg)
+    }
+    private func capture(type: CGEventType, event: CGEvent) {
+        let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        if type == .keyDown, code == 0x35 {
+            endCapture()
+            onCancel?()
+            return
         }
-        if modifiers.contains(.option) {
-            flags.insert(.maskAlternate)
-            prefix += "⌥"
+        let characters = type == .keyDown
+            ? NSEvent(cgEvent: event)?.charactersIgnoringModifiers : nil
+        if let shortcut = recording.consume(type: type, code: code, flags: event.flags,
+                                             characters: characters) {
+            onCapture?(shortcut)
         }
-        if modifiers.contains(.shift) {
-            flags.insert(.maskShift)
-            prefix += "⇧"
-        }
-        if modifiers.contains(.command) {
-            flags.insert(.maskCommand)
-            prefix += "⌘"
-        }
-
-        let special: [UInt16: String] = [
-            0x24: "Return", 0x30: "Tab", 0x31: "Space", 0x33: "Delete",
-            0x35: "Esc", 0x73: "Home", 0x77: "End", 0x74: "Page Up",
-            0x79: "Page Down", 0x7B: "←", 0x7C: "→", 0x7D: "↓", 0x7E: "↑",
-            0x7A: "F1", 0x78: "F2", 0x63: "F3", 0x76: "F4",
-            0x60: "F5", 0x61: "F6", 0x62: "F7", 0x64: "F8",
-            0x65: "F9", 0x6D: "F10", 0x67: "F11", 0x6F: "F12",
-        ]
-        let key = special[event.keyCode]
-            ?? event.charactersIgnoringModifiers?.uppercased()
-            ?? String(format: "Key 0x%02X", event.keyCode)
-        return RemoteCustomShortcut(
-            keyCode: event.keyCode,
-            flags: flags.rawValue,
-            label: prefix + key
-        )
     }
 }
 

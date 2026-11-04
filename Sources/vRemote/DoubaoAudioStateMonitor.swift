@@ -33,6 +33,7 @@ final class DoubaoAudioStateMonitor {
 
     private static let targetDeviceName = "vRemoteDr 2ch"
 
+    private var helperPoll: Timer?
     private var started = false
     private var processObjectID = AudioObjectID(kAudioObjectUnknown)
     private var processPID: pid_t?
@@ -70,6 +71,10 @@ final class DoubaoAudioStateMonitor {
             print("[DOUBAO-STATE] 无法监听音频进程列表: \(Self.describe(status))")
         }
         refreshBindingAndPublish(force: true)
+        helperPoll = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+            guard VoiceInputMethod.current.usesHelperProcesses else { return }
+            self?.refreshBindingAndPublish(force: false)
+        }
     }
 
     /// Rebinds to the newly selected input method's process.
@@ -82,6 +87,8 @@ final class DoubaoAudioStateMonitor {
     func stop() {
         guard started else { return }
         started = false
+        helperPoll?.invalidate()
+        helperPoll = nil
         unbindProcessObject()
 
         var address = Self.processListAddress
@@ -209,6 +216,7 @@ final class DoubaoAudioStateMonitor {
     }
 
     private func readCurrentSnapshot() -> Snapshot {
+        if VoiceInputMethod.current.usesHelperProcesses { return readHelperSnapshot() }
         guard processObjectID != kAudioObjectUnknown else {
             return Snapshot(
                 state: .unavailable,
@@ -246,6 +254,45 @@ final class DoubaoAudioStateMonitor {
             inputDeviceIDs: deviceIDs,
             inputDeviceNames: names
         )
+    }
+
+    /// Electron voice apps may capture from a Helper instead of their UI
+    /// process. Match only the selected bundle and its namespaced helpers.
+    private func readHelperSnapshot() -> Snapshot {
+        let method = VoiceInputMethod.current
+        let objects = Self.objectListProperty(
+            object: AudioObjectID(kAudioObjectSystemObject),
+            selector: kAudioHardwarePropertyProcessObjectList,
+            scope: kAudioObjectPropertyScopeGlobal
+        )
+        let candidates = objects.filter { object in
+            if let bundleID = Self.bundleID(of: object), method.matchesAudioBundle(bundleID) { return true }
+            let pid = Self.uint32Property(object: object, selector: kAudioProcessPropertyPID,
+                                          scope: kAudioObjectPropertyScopeGlobal)
+            return pid.map { pid_t(bitPattern: $0) == processPID } ?? false
+        }
+        let active = candidates.filter {
+            Self.uint32Property(object: $0, selector: kAudioProcessPropertyIsRunningInput,
+                                scope: kAudioObjectPropertyScopeGlobal) == 1
+        }
+        let devices = Set(active.flatMap {
+            Self.objectListProperty(object: $0, selector: kAudioProcessPropertyDevices,
+                                    scope: kAudioObjectPropertyScopeInput)
+        }).sorted()
+        let running = !active.isEmpty
+        let available = !candidates.isEmpty || processPID != nil
+        return Snapshot(state: running ? .active : (available ? .inactive : .unavailable),
+                        pid: processPID, processObjectID: active.first ?? candidates.first,
+                        inputDeviceIDs: devices, inputDeviceNames: devices.map(Self.deviceName))
+    }
+
+    private static func bundleID(of object: AudioObjectID) -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyBundleID,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var value: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
+        let result = AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value)
+        return result == noErr ? value as String : nil
     }
 
     private static func processObject(for pid: pid_t) -> AudioObjectID {

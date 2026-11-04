@@ -1,5 +1,41 @@
 # vRemoter
 
+## Recordable voice shortcuts
+
+Branch `codex/recordable-voice-shortcuts` extends the local-only version.
+
+1. Open **按键映射** and choose **Typeless** under the voice app selector.
+2. Click the shortcut button, press your actual keyboard shortcut, then click
+   **保存**. **取消** or **Esc** keeps the previous setting. Left and right
+   modifiers are distinct. Modifier-only keys, modifier chords and Fn + Space
+   are supported; mouse buttons are not recorded by this keyboard recorder.
+3. In Typeless, choose `vRemoteDr 2ch` as the microphone and configure the same
+   shortcut. Typeless defaults to Right Cmd here, matching the requested setup;
+   you can record any supported keyboard shortcut instead.
+4. The selector chooses the recording process to observe, not the keyboard input
+   source. Available targets are Doubao, WeType, Typeless and Codex Dictation.
+   Each target saves its own shortcut. For Codex, first configure and test its
+   in-app dictation shortcut, then record that shortcut here. Select its audio
+   input in the voice app as supported; this branch does not change the system
+   input for Typeless or Codex.
+
+The recorder diverts keyboard events when the recording window is key and the
+app's global Accessibility event tap is available. Without that permission,
+local AppKit capture still works but system-wide hotkeys may also reach their
+own applications. Grant Accessibility/Input Monitoring before configuring.
+New shortcuts are replayed as native modifier edges with left/right device
+flags and normal key down/up edges. Legacy custom mappings and modifier presets
+remain readable. Typeless/Codex capture state includes namespaced CoreAudio
+helper processes and a three-second start grace period.
+
+Validation: 29 shortcut regression assertions and all 43 existing voice-session
+assertions pass. Debug/Release builds and ad-hoc signature verification pass.
+The actual AppKit sheet was exercised with internal Right Cmd events; the
+captured value was visible in a screenshot. This is not a physical-keyboard or
+remote-to-Typeless acceptance test. No installed app or driver is replaced by
+building this branch. End-to-end voice input still needs hardware validation.
+The local-only removals below remain in effect.
+
 ## Local-only branch
 
 `codex/local-only` is based on `ccc333cn-edition` at
@@ -17,7 +53,7 @@ Voice-session tests use `swift run vRemote --voice-session-self-test` in a debug
 (or run `.build/debug/vRemote --voice-session-self-test` after `swift build`).
 Building the application does not install its HAL audio plug-in. The plug-in,
 hardware permissions, a supported remote, and a compatible input method are
-required for end-to-end voice input. Typeless integration is not added by this branch.
+required for end-to-end voice input. Typeless/Codex integration is described in the recordable-shortcuts section above.
 
 On this machine, the macOS 27 Command Line Tools SDK lacks the SwiftUI macro
 plug-in required by its `@State` implementation. The existing macOS 26.5 SDK

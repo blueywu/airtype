@@ -71,6 +71,7 @@ final class X6SessionCoordinator {
     private let setRemoteRouteActive: (Bool) -> Void
     private let triggerTap: () -> Void
     private let now: () -> Date
+    private let openingTimeout: () -> TimeInterval
 
     private var phase: Phase = .closed
     private var owner: Owner = .none
@@ -106,12 +107,14 @@ final class X6SessionCoordinator {
             AudioPipe.shared.setRemoteActive($0)
         },
         triggerTap: @escaping () -> Void = { Key.triggerTap() },
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        openingTimeout: @escaping () -> TimeInterval = { VoiceInputMethod.current.openingTimeout }
     ) {
         self.doubaoState = doubaoState
         self.setRemoteRouteActive = setRemoteRouteActive
         self.triggerTap = triggerTap
         self.now = now
+        self.openingTimeout = openingTimeout
     }
 
     var debugSnapshot: DebugSnapshot {
@@ -831,7 +834,7 @@ final class X6SessionCoordinator {
             self.publish("豆包未启动 · 遥控器自动关闭")
         }
         startVerificationWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + openingTimeout(), execute: work)
     }
 
     private func scheduleCloseVerification(for expectedGeneration: UInt64) {

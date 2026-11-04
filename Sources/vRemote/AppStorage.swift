@@ -73,6 +73,21 @@ enum AppStorage {
         }
     }
 
+    static var voiceShortcut: RemoteCustomShortcut {
+        get {
+            if let data = UserDefaults.standard.data(forKey: "voiceShortcut." + VoiceInputMethod.current.rawValue),
+               let saved = try? JSONDecoder().decode(RemoteCustomShortcut.self, from: data) {
+                return saved
+            }
+            return VoiceInputMethod.current == .typeless ? .rightCommand : .legacy(inputTriggerKey)
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: "voiceShortcut." + VoiceInputMethod.current.rawValue)
+            }
+        }
+    }
+
     static func ensureDirectory(_ url: URL) {
         try? FileManager.default.createDirectory(
             at: url,

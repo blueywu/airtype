@@ -50,39 +50,15 @@ enum Key {
     /// keyboards, Bluetooth buttons, and external remappers.
     static let syntheticMarker: Int64 = 0x4D_49_52_42 // "MIRB"
 
-    static func triggerDown(_ trigger: InputTriggerKey = AppStorage.inputTriggerKey) {
-        post(trigger: trigger, keyDown: true)
-    }
+    static func triggerDown() { AppStorage.voiceShortcut.post(isDown: true) }
+    static func triggerUp() { AppStorage.voiceShortcut.post(isDown: false) }
 
-    static func triggerUp(_ trigger: InputTriggerKey = AppStorage.inputTriggerKey) {
-        post(trigger: trigger, keyDown: false)
-    }
-
-    /// A deliberate short modifier click for Doubao's toggle mode.
-    static func triggerTap(
-        _ trigger: InputTriggerKey = AppStorage.inputTriggerKey,
-        completion: (() -> Void)? = nil
-    ) {
-        triggerDown(trigger)
+    static func triggerTap(completion: (() -> Void)? = nil) {
+        let shortcut = AppStorage.voiceShortcut
+        shortcut.post(isDown: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-            triggerUp(trigger)
+            shortcut.post(isDown: false)
             completion?()
         }
-    }
-
-    private static func post(trigger: InputTriggerKey, keyDown: Bool) {
-        let source = CGEventSource(stateID: .hidSystemState)
-        guard let event = CGEvent(
-            keyboardEventSource: source,
-            virtualKey: trigger.primaryKeyCode,
-            keyDown: keyDown
-        ) else { return }
-        event.flags = keyDown ? trigger.flag : []
-        event.setIntegerValueField(.eventSourceUserData, value: syntheticMarker)
-        event.post(tap: .cghidEventTap)
-        print(
-            "[KEY] synthetic \(trigger.title) " +
-            (keyDown ? "DOWN" : "UP")
-        )
     }
 }

@@ -230,24 +230,6 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
     }
 }
 
-struct RemoteCustomShortcut: Codable, Hashable {
-    let keyCode: UInt16
-    let flags: UInt64
-    let label: String
-
-    func post(isDown: Bool) {
-        let source = CGEventSource(stateID: .hidSystemState)
-        guard let event = CGEvent(
-            keyboardEventSource: source,
-            virtualKey: CGKeyCode(keyCode),
-            keyDown: isDown
-        ) else { return }
-        event.flags = CGEventFlags(rawValue: flags)
-        event.setIntegerValueField(.eventSourceUserData, value: Key.syntheticMarker)
-        event.post(tap: .cghidEventTap)
-    }
-}
-
 final class RemoteMappingStore: ObservableObject {
     static let shared = RemoteMappingStore()
 
