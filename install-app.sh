@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
-SOURCE="$SCRIPT_DIR/dist/build/vRemote.app"
-DESTINATION="$HOME/Applications/vRemote.app"
+SOURCE="$SCRIPT_DIR/dist/build/AirType.app"
+DESTINATION="$HOME/Applications/AirType.app"
 
 if [[ ! -d "$SOURCE" ]]; then
   print -u2 "Run package-app.sh first."

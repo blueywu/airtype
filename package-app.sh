@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
-APP="$SCRIPT_DIR/dist/build/vRemote.app"
+APP="$SCRIPT_DIR/dist/build/AirType.app"
 CONTENTS="$APP/Contents"
 
 cd "$SCRIPT_DIR"
@@ -39,10 +39,6 @@ rm -rf "$ICONSET"
 if [[ -d "$SCRIPT_DIR/Resources/PermissionGuides" ]]; then
   ditto "$SCRIPT_DIR/Resources/PermissionGuides" \
     "$CONTENTS/Resources/PermissionGuides"
-fi
-if [[ -d "$SCRIPT_DIR/Resources/buymeacoffee" ]]; then
-  ditto "$SCRIPT_DIR/Resources/buymeacoffee" \
-    "$CONTENTS/Resources/BuyMeACoffee"
 fi
 if [[ -d "$SCRIPT_DIR/Resources/RemoteImages" ]]; then
   ditto "$SCRIPT_DIR/Resources/RemoteImages" \

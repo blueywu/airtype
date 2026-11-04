@@ -22,15 +22,8 @@ import Foundation
 
 // MARK: - Menu bar UI
 
-final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppController: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var headerLabel: NSMenuItem!
-    private var launchAtLoginItem: NSMenuItem!
-    private var loggingToggleItem: NSMenuItem!
-    private var logSizeItem: NSMenuItem!
-    private var recordingToggleItem: NSMenuItem!
-    private var recordingSizeItem: NSMenuItem!
-    private var languageItems: [AppLanguage: NSMenuItem] = [:]
 
     private var x6HIDConnected = false
     private var x6BLEConnected = false
@@ -68,13 +61,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         AppStorage.prepare()
+        // The simplified shell has no diagnostic-recording control. Do not
+        // let an old saved debug opt-in keep recording invisibly.
+        AppStorage.recordingEnabled = false
         // Keep one continuous diagnostic history while X6 is being tuned.
         // Log.swift rotates at 5 MB; only the explicit menu action clears it.
         Log.setEnabled(true)
         let appVersion = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleShortVersionString"
         ) as? String ?? "development"
-        print("[APP] ===== vRemoter \(appVersion) started =====")
+        print("[APP] ===== AirType \(appVersion) started =====")
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let statusImage = LogoAsset.image.copy() as? NSImage
@@ -85,40 +81,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.applicationIconImage = LogoAsset.image
 
         let menu = NSMenu()
-        menu.delegate = self
-        let header = NSMenuItem(
-            title: L10n.text("状态 · 启动中", "Status · Starting"),
-            action: nil,
-            keyEquivalent: ""
+        let settings = NSMenuItem(
+            title: L10n.text("设置…", "Settings…"),
+            action: #selector(openDebugWindow), keyEquivalent: ","
         )
-        header.isEnabled = false
-        menu.addItem(header)
-        headerLabel = header
-
-        let launch = NSMenuItem(
-            title: L10n.text("登录时自动启动", "Launch at login"),
-            action: #selector(toggleLaunchAtLogin),
-            keyEquivalent: ""
-        )
-        launch.target = self
-        menu.addItem(launch)
-        launchAtLoginItem = launch
-
-        menu.addItem(.separator())
-        menu.addItem(makeControlMenu())
-        menu.addItem(makeLogMenu())
-        menu.addItem(makeRecordingMenu())
-        menu.addItem(makeLanguageMenu())
-
-        menu.addItem(.separator())
-        let donation = NSMenuItem(
-            title: L10n.text("打赏", "Buy me a coffee"),
-            action: #selector(openDonation),
-            keyEquivalent: ""
-        )
-        donation.target = self
-        menu.addItem(donation)
-
+        settings.target = self
+        menu.addItem(settings)
         menu.addItem(.separator())
         let quit = NSMenuItem(
             title: L10n.text("退出", "Quit"),
@@ -128,8 +96,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         quit.target = self
         menu.addItem(quit)
         statusItem.menu = menu
-        refreshMenuState()
         wireDebugWindow()
+        #if DEBUG
+        if CommandLine.arguments.contains("--menu-smoke-test") {
+            let titles = menu.items.filter { !$0.isSeparatorItem }.map(\.title)
+            precondition(titles == [L10n.text("设置…", "Settings…"), L10n.text("退出", "Quit")])
+            FileHandle.standardError.write(Data("[MENU-TEST] PASS AirType menu has Settings and Quit only\n".utf8))
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+            return
+        }
+        #endif
 
         // X6 HID observation and ATVV audio are independent connections.
         x6.onConnectionChanged = { [weak self] connected in
@@ -257,7 +233,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ) ?? .unavailable
         }
         x6Session.onStateChanged = { [weak self] status in
-            self?.headerLabel.title = "状态 · \(status)"
             self?.updateStatus()
         }
         // Persist the auto-detected input method so later lookups are cheap
@@ -287,157 +262,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
-        refreshMenuState()
-    }
-
-    private func makeLogMenu() -> NSMenuItem {
-        let root = NSMenuItem(title: L10n.text("日志", "Logs"), action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: L10n.text("日志", "Logs"))
-
-        let toggle = NSMenuItem(
-            title: L10n.text("记录日志", "Record logs"),
-            action: #selector(toggleLogging),
-            keyEquivalent: ""
-        )
-        toggle.target = self
-        submenu.addItem(toggle)
-        loggingToggleItem = toggle
-
-        let size = NSMenuItem(title: L10n.text("占用 · 0 字节", "Size · 0 bytes"), action: nil, keyEquivalent: "")
-        size.isEnabled = false
-        submenu.addItem(size)
-        logSizeItem = size
-
-        let refresh = NSMenuItem(
-            title: L10n.text("刷新占用大小", "Refresh size"),
-            action: #selector(refreshStorageSizes),
-            keyEquivalent: ""
-        )
-        refresh.target = self
-        submenu.addItem(refresh)
-
-        let open = NSMenuItem(
-            title: L10n.text("打开日志文件夹", "Open logs folder"),
-            action: #selector(openLogFolder),
-            keyEquivalent: ""
-        )
-        open.target = self
-        submenu.addItem(open)
-
-        let clear = NSMenuItem(
-            title: L10n.text("清空日志", "Clear logs"),
-            action: #selector(clearLog),
-            keyEquivalent: ""
-        )
-        clear.target = self
-        submenu.addItem(clear)
-
-        root.submenu = submenu
-        return root
-    }
-
-    private func makeControlMenu() -> NSMenuItem {
-        let root = NSMenuItem(title: L10n.text("控制台", "Console"), action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: L10n.text("控制台", "Console"))
-
-        let open = NSMenuItem(
-            title: L10n.text("打开前台控制台", "Open console"),
-            action: #selector(openDebugWindow),
-            keyEquivalent: ""
-        )
-        open.target = self
-        submenu.addItem(open)
-
-        let stop = NSMenuItem(
-            title: L10n.text("关闭麦克风", "Stop microphone"),
-            action: #selector(stopMicrophone),
-            keyEquivalent: ""
-        )
-        stop.target = self
-        submenu.addItem(stop)
-
-        let restart = NSMenuItem(
-            title: L10n.text("重启 App", "Restart app"),
-            action: #selector(restartApp),
-            keyEquivalent: ""
-        )
-        restart.target = self
-        submenu.addItem(restart)
-
-        root.submenu = submenu
-        return root
-    }
-
-    private func makeRecordingMenu() -> NSMenuItem {
-        let root = NSMenuItem(title: L10n.text("调试录音", "Debug recordings"), action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: L10n.text("调试录音", "Debug recordings"))
-
-        let toggle = NSMenuItem(
-            title: L10n.text("保存 WAV 与原始数据", "Save WAV and raw data"),
-            action: #selector(toggleRecording),
-            keyEquivalent: ""
-        )
-        toggle.target = self
-        submenu.addItem(toggle)
-        recordingToggleItem = toggle
-
-        let size = NSMenuItem(title: L10n.text("占用 · 0 字节", "Size · 0 bytes"), action: nil, keyEquivalent: "")
-        size.isEnabled = false
-        submenu.addItem(size)
-        recordingSizeItem = size
-
-        let refresh = NSMenuItem(
-            title: L10n.text("刷新占用大小", "Refresh size"),
-            action: #selector(refreshStorageSizes),
-            keyEquivalent: ""
-        )
-        refresh.target = self
-        submenu.addItem(refresh)
-
-        let open = NSMenuItem(
-            title: L10n.text("打开录音文件夹", "Open recordings folder"),
-            action: #selector(openRecordingFolder),
-            keyEquivalent: ""
-        )
-        open.target = self
-        submenu.addItem(open)
-
-        let clear = NSMenuItem(
-            title: L10n.text("清空录音文件", "Clear recordings"),
-            action: #selector(clearRecordings),
-            keyEquivalent: ""
-        )
-        clear.target = self
-        submenu.addItem(clear)
-
-        root.submenu = submenu
-        return root
-    }
-
-    private func makeLanguageMenu() -> NSMenuItem {
-        let root = NSMenuItem(
-            title: L10n.text("语言", "Language"),
-            action: nil,
-            keyEquivalent: ""
-        )
-        let submenu = NSMenu(title: L10n.text("语言", "Language"))
-        let options: [(AppLanguage, String, Selector)] = [
-            (.system, L10n.text("跟随系统", "System Default"), #selector(selectSystemLanguage)),
-            (.simplifiedChinese, "简体中文", #selector(selectSimplifiedChinese)),
-            (.english, "English", #selector(selectEnglish))
-        ]
-        for (language, title, selector) in options {
-            let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
-            item.target = self
-            item.state = AppLanguage.selected == language ? .on : .off
-            submenu.addItem(item)
-            languageItems[language] = item
-        }
-        root.submenu = submenu
-        return root
-    }
-
     private func updateStatus() {
         let anyHID = x6HIDConnected || chromecastHIDConnected
         let anyBLE = x6BLEConnected || chromecastBLEConnected
@@ -456,8 +280,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             statusText = L10n.text("等待遥控器", "Waiting for remote")
         }
-        statusItem.button?.toolTip = "vRemoter · \(statusText)"
-        headerLabel.title = L10n.text("状态 · \(statusText)", "Status · \(statusText)")
+        statusItem.button?.toolTip = "AirType · \(statusText)"
         debugWindow.update(
             status: statusText,
             hidConnected: anyHID,
@@ -483,9 +306,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         debugWindow.onRestartApp = { [weak self] in
             self?.restartAppNow()
         }
-        debugWindow.onOnDemandAudioChanged = { [weak self] enabled in
+        debugWindow.onOnDemandAudioChanged = { enabled in
             AudioPipe.shared.setOnDemandAudio(enabled)
-            self?.refreshMenuState()
         }
         debugWindow.onMacInputEnabledChanged = { [weak self] enabled in
             let audio = AudioPipe.shared
@@ -532,28 +354,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openDebugWindow() {
         debugWindow.show()
-    }
-
-    @objc private func openDonation() {
-        debugWindow.showDonation()
-    }
-
-    @objc private func selectSystemLanguage() {
-        setLanguageAndRestart(.system)
-    }
-
-    @objc private func selectSimplifiedChinese() {
-        setLanguageAndRestart(.simplifiedChinese)
-    }
-
-    @objc private func selectEnglish() {
-        setLanguageAndRestart(.english)
-    }
-
-    private func setLanguageAndRestart(_ language: AppLanguage) {
-        guard AppLanguage.selected != language else { return }
-        AppLanguage.selected = language
-        restartAppNow()
     }
 
     @objc private func stopMicrophone() {
@@ -635,75 +435,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func closeAllRemoteMicrophones() {
         x6BLE.closeMicrophone(force: true)
         chromecastBLE.closeMicrophone(force: true)
-    }
-
-    private func refreshMenuState() {
-        launchAtLoginItem?.state = LaunchAtLogin.isEnabled ? .on : .off
-        loggingToggleItem?.state = Log.isEnabled ? .on : .off
-        recordingToggleItem?.state = AppStorage.recordingEnabled ? .on : .off
-        refreshSizeLabels()
-    }
-
-    private func refreshSizeLabels() {
-        logSizeItem?.title = L10n.text("占用", "Size")
-            + " · \(AppStorage.formattedSize(Log.byteSize))"
-        let recordingBytes = AppStorage.byteSize(
-            of: AppStorage.recordingsDirectory
-        )
-        recordingSizeItem?.title = L10n.text("占用", "Size")
-            + " · \(AppStorage.formattedSize(recordingBytes))"
-    }
-
-    @objc private func toggleLaunchAtLogin() {
-        do {
-            try LaunchAtLogin.setEnabled(!LaunchAtLogin.isEnabled)
-        } catch {
-            headerLabel.title = L10n.text(
-                "状态 · 登录启动设置失败",
-                "Status · Launch-at-login failed"
-            )
-        }
-        refreshMenuState()
-    }
-
-    @objc private func toggleLogging() {
-        Log.setEnabled(!Log.isEnabled)
-        if Log.isEnabled {
-            print("[APP] 日志已由用户开启")
-        }
-        refreshMenuState()
-    }
-
-    @objc private func toggleRecording() {
-        let enabled = !AppStorage.recordingEnabled
-        AppStorage.recordingEnabled = enabled
-        x6BLE.setRecordingEnabled(enabled)
-        chromecastBLE.setRecordingEnabled(enabled)
-        refreshMenuState()
-    }
-
-    @objc private func refreshStorageSizes() {
-        refreshSizeLabels()
-    }
-
-    @objc private func openLogFolder() {
-        AppStorage.ensureDirectory(AppStorage.logsDirectory)
-        NSWorkspace.shared.open(AppStorage.logsDirectory)
-    }
-
-    @objc private func openRecordingFolder() {
-        AppStorage.ensureDirectory(AppStorage.recordingsDirectory)
-        NSWorkspace.shared.open(AppStorage.recordingsDirectory)
-    }
-
-    @objc private func clearLog() {
-        Log.clear()
-        refreshSizeLabels()
-    }
-
-    @objc private func clearRecordings() {
-        x6BLE.clearRecordings()
-        refreshSizeLabels()
     }
 
     @objc private func quit() {

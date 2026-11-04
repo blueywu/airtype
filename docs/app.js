@@ -31,20 +31,4 @@ languageButtons.forEach((button) => {
   button.addEventListener('click', () => applyLanguage(button.dataset.setLanguage));
 });
 
-const donationAssets = {
-  wechat: ['assets/donate/wechat.JPG', 'WeChat payment QR code'],
-  alipay: ['assets/donate/alipay.JPG', 'Alipay payment QR code'],
-  paypal: ['assets/donate/paypal.JPG', 'PayPal payment QR code']
-};
-document.querySelectorAll('[data-donation]').forEach((button) => {
-  button.addEventListener('click', () => {
-    document.querySelectorAll('[data-donation]').forEach((item) => item.classList.remove('active'));
-    button.classList.add('active');
-    const [source, alt] = donationAssets[button.dataset.donation];
-    const image = document.querySelector('#donation-code');
-    image.src = source;
-    image.alt = alt;
-  });
-});
-
 applyLanguage(language);

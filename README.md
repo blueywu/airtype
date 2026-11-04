@@ -1,4 +1,20 @@
-# vRemoter
+# AirType
+
+## AirType shell and next work
+
+The previous tested main baseline was `0f53854`. Shell cleanup is developed separately on
+`codex/airtype-shell`: display-name rebrand, Settings/Quit-only menu, visible
+custom-record controls beside preset mapping menus, and removal of payment UI,
+its prompting code and all active app/site payment images. A stale diagnostic
+recording opt-in is disabled at startup because its menu controls were removed;
+existing recording files are not deleted. Dedicated advanced preferences will
+be consolidated later. Internal bundle/executable/driver identifiers remain
+unchanged. The packaged folder is now `AirType.app`.
+
+See [ROADMAP.md](ROADMAP.md) for priorities and acceptance conditions. Menu SVG
+candidates in `Design/AirType-Menubar/` are review artifacts only. The current
+application image remains pending approval; no generated logo has been made.
+
 
 ## Optional on-demand audio
 
@@ -76,7 +92,7 @@ The local-only removals below remain in effect.
 - Removes the remote-store configuration, purchase UI, and commerce assets.
 - Keeps the fork's four remote/input-method fixes and the existing audio driver integration.
 - The application has no remaining HTTP client or remote image loading code. Bluetooth is still required for the remote.
-- Existing local donation images remain; they do not make network requests.
+- Support/payment UI and its assets have been removed in the AirType shell branch.
 
 Build with `./package-app.sh`; protocol tests use `./run-self-tests.sh`.
 Voice-session tests use `swift run vRemote --voice-session-self-test` in a debug build
@@ -162,14 +178,6 @@ Chromecast Remote 已实现语音键双模式：短按第一次打开、第二�
 完整历史见 [CHANGELOG.md](CHANGELOG.md)。
 
 当前支持边界：Chromecast 仅确认上述 VID/PID；X6 鼠标模式切换键由设备固件内部处理，不能单独重映射。语音键保留给豆包语音控制。Fn 的实际行为取决于 Mac 与豆包配置，建议首次使用时现场测试。
-
-## 支持开发
-
-vRemoter 免费提供。制作不易，麻烦打个赏补偿一点我的 Token 费吧。谢主隆恩🙏🙏🙏～～～
-
-| 微信 / WeChat | 支付宝 / Alipay | PayPal |
-|---|---|---|
-| <img src="docs/assets/donate/wechat.JPG" alt="微信打赏二维码" width="220"> | <img src="docs/assets/donate/alipay.JPG" alt="支付宝打赏二维码" width="220"> | <img src="docs/assets/donate/paypal.JPG" alt="PayPal donation QR code" width="220"> |
 
 ## 仓库与公开服务边界
 

@@ -7,9 +7,6 @@
   --secondary: #9da3ad;
   --green: #55d88c;
   --amber: #f4a447;
-  --wechat: #07c160;
-  --alipay: #1677ff;
-  --paypal: #1769aa;
   --max: 1180px;
 }
 
@@ -180,18 +177,8 @@ figcaption { margin-top: 11px; color: var(--secondary); font-size: 11px; }
 
 .support-band .section-inner { padding-block: 108px; }
 .support-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 72px; align-items: center; }
-.donation-panel { width: min(100%, 520px); height: 500px; padding: 18px; justify-self: end; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; background: #0b0c0e; }
 .tabs { display: flex; gap: 7px; }
 .tabs button { min-height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: 7px; font-size: 12px; font-weight: 700; }
-.donation-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.donation-tabs button { min-width: 0; padding-inline: 8px; white-space: nowrap; }
-.donation-tabs button[data-donation="wechat"] { color: var(--wechat); }
-.donation-tabs button[data-donation="wechat"].active { color: white; border-color: var(--wechat); background: var(--wechat); }
-.donation-tabs button[data-donation="alipay"] { color: var(--alipay); }
-.donation-tabs button[data-donation="alipay"].active { color: white; border-color: var(--alipay); background: var(--alipay); }
-.donation-tabs button[data-donation="paypal"] { color: #73afff; }
-.donation-tabs button[data-donation="paypal"].active { color: white; border-color: var(--paypal); background: var(--paypal); }
-#donation-code { width: 100%; min-height: 0; flex: 1; margin-top: 16px; object-fit: contain; background: #050607; border-radius: 8px; }
 
 footer { border-top: 1px solid var(--line); }
 .footer-inner { min-height: 112px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
@@ -211,7 +198,6 @@ footer { border-top: 1px solid var(--line); }
   .section-heading-row { grid-template-columns: 1fr; gap: 10px; }
   .section-heading-row > p { justify-self: start; }
   .guide-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .donation-panel { max-width: none; justify-self: stretch; }
 }
 
 @media (max-width: 700px) {
@@ -238,7 +224,6 @@ footer { border-top: 1px solid var(--line); }
   .voice-modes > div { min-height: 0; border-right: 0; border-bottom: 1px solid var(--line); }
   .voice-modes > div:last-child { border-bottom: 0; }
   .voice-modes span { margin-bottom: 30px; }
-  .donation-panel { height: 440px; }
   .footer-inner { align-items: flex-start; flex-direction: column; justify-content: center; }
   .footer-inner p { text-align: left; }
 }
@@ -246,5 +231,4 @@ footer { border-top: 1px solid var(--line); }
 @media (max-width: 430px) {
   .remote-card { grid-template-columns: 1fr; }
   .remote-card img { height: 240px; }
-  .donation-tabs button { font-size: 10px; }
 }
