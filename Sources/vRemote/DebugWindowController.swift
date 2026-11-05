@@ -539,6 +539,7 @@ private struct StudioMixerView: View {
         .padding(20)
         .frame(width: 775, height: 700)
         .background(ConsoleTheme.panel)
+        .preferredColorScheme(.dark)
         .tint(ConsoleTheme.green)
         .sheet(item: $model.activeModal) { modal in
             switch modal {
