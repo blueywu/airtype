@@ -274,27 +274,15 @@ final class AppController: NSObject, NSApplicationDelegate {
             AudioPipe.shared.setOnDemandAudio(enabled)
         }
         debugWindow.onMacInputEnabledChanged = { [weak self] enabled in
-            let audio = AudioPipe.shared
-            audio.setInputEnabled(
-                mac: enabled,
-                remote: audio.isRemoteInputEnabled
-            )
+            AudioSourceSettings.shared.otherEnabled = enabled
+            AudioPipe.shared.setInputEnabled(mac: enabled, remote: AudioSourceSettings.shared.remoteEnabled, persist: false)
+            self?.microphoneFollow.sourceConfigurationChanged()
             self?.updateStatus()
         }
         debugWindow.onRemoteInputEnabledChanged = { [weak self] enabled in
-            let audio = AudioPipe.shared
-            audio.setInputEnabled(
-                mac: audio.isMacInputEnabled,
-                remote: enabled
-            )
-            if !enabled {
-                self?.x6BLE.closeMicrophone(force: true)
-                self?.chromecastBLE.closeMicrophone(force: true)
-                self?.debugWindow.updateRemoteLevel(-120)
-            } else {
-                self?.microphoneFollow.connectionChanged()
-                self?.microphoneFollow.poll()
-            }
+            AudioSourceSettings.shared.remoteEnabled = enabled
+            AudioPipe.shared.setInputEnabled(mac: AudioSourceSettings.shared.otherEnabled, remote: enabled, persist: false)
+            self?.microphoneFollow.sourceConfigurationChanged()
             self?.updateStatus()
         }
         debugWindow.onInputTriggerChanged = { [weak self] in
@@ -414,6 +402,9 @@ final class AppController: NSObject, NSApplicationDelegate {
 // MARK: - Entry
 
 #if DEBUG
+if CommandLine.arguments.contains("--audio-device-inventory") { VoiceRoutingSelfTest.inventory(); exit(0) }
+if CommandLine.arguments.contains("--voice-routing-device-test") { exit(VoiceRoutingSelfTest.deviceProbe() ? 0 : 1) }
+if CommandLine.arguments.contains("--voice-routing-self-test") { exit(VoiceRoutingSelfTest.run() ? 0 : 1) }
 if CommandLine.arguments.contains("--microphone-reader-test") { exit(MicrophoneFollowSelfTest.readerProbe() ? 0 : 1) }
 if CommandLine.arguments.contains("--microphone-readers-inspect") { MicrophoneFollowSelfTest.inspectReaders(); exit(0) }
 if CommandLine.arguments.contains("--microphone-follow-self-test") {

@@ -38,6 +38,8 @@ enum MicrophoneFollowSelfTest {
         let settings = MicrophoneFollowSettings(defaults: defaults)
         let controller = MicrophoneFollowController()
         controller.settings = settings
+        controller.preparePassiveSources = { nil }
+        controller.remoteEnabled = { true }
         var readers: [MicrophoneReader] = []
         var routes: [Bool] = [], opens = 0, closes = 0
         controller.readConsumers = { readers }

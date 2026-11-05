@@ -136,6 +136,12 @@ final class MicrophoneFollowController: ObservableObject {
     private var pendingStop: Date?
     private var usageIDs: [String: UUID] = [:]
     @Published var paused = false
+    @Published private(set) var voiceActionBusy = false
+    let actions = VoiceMicrophoneAction()
+    var remoteEnabled: () -> Bool = { AudioSourceSettings.shared.remoteEnabled }
+    var preparePassiveSources: () -> String? = { AudioPipe.shared.prepareSources() }
+    var sourcesReady: () -> Bool = { AudioPipe.shared.isOutputRunning && AudioPipe.shared.otherInputReady }
+    private var passivePreparationFailed = false
     var readConsumers: () -> [MicrophoneReader] = MicrophoneReaders.current
     var setRoute: (Bool) -> Void = { AudioPipe.shared.setRemoteActive($0) }
     var settings: MicrophoneFollowSettings = .shared
@@ -143,9 +149,14 @@ final class MicrophoneFollowController: ObservableObject {
     private var firstFrameAt: [VoiceRemoteID: Date] = [:]
     private var receivedFrame = Set<VoiceRemoteID>()
     private var attempts = 0
+    func sourceConfigurationChanged() {
+        guard !actions.isBusy else { return }
+        wanted = false; passivePreparationFailed = false; attempts = 0
+        setRoute(false); closeRemotes?(); poll()
+    }
     func connectionChanged() { attempts = 0; lastRequest = .distantPast }
     func pause() { paused = true; poll() }
-    func resume() { paused = false; attempts = 0; poll() }
+    func resume() { paused = false; attempts = 0; passivePreparationFailed = false; poll() }
     func frameReceived(_ remote: VoiceRemoteID) { receivedFrame.insert(remote); attempts = 0 }
     private func updateUsage(_ consumers: [MicrophoneReader]) {
         let groups = Dictionary(grouping: consumers) { $0.bundleID.isEmpty ? "pid:\($0.pid)" : $0.bundleID }
@@ -160,38 +171,70 @@ final class MicrophoneFollowController: ObservableObject {
         }
     }
     func start() {
-        RemoteMappingStore.shared.onVoiceAction = { [weak self] service, _, _ in self?.send(service) }
+        actions.validate = { [weak self] service in
+            guard let self, !self.paused else { return "麦克风已暂停，请先在麦克风页恢复。" }
+            guard VoiceServiceStore.shared.isUsable(service) else { return "请先启用语音动作并配置快捷键。" }
+            guard service.isInstalled else { return "未找到 \(service.title)，请先安装应用。" }
+            if service == .codex && NSWorkspace.shared.frontmostApplication?.bundleIdentifier != service.bundleIdentifier {
+                return "请先将 Codex 放到前台，再使用它的语音动作。"
+            }
+            guard !self.remoteEnabled() || self.preferredRemote?() != nil else { return "遥控器未连接，未发送听写快捷键。" }
+            return nil
+        }
+        actions.ready = { [weak self] in
+            guard let self else { return false }
+            return self.sourcesReady() && (!self.remoteEnabled() || !self.receivedFrame.isEmpty)
+        }
+        actions.health = { [weak self] in
+            if self?.remoteEnabled() == true && self?.preferredRemote?() == nil {
+                return "遥控器已断开。"
+            }
+            return AudioPipe.shared.sourceHealthError
+        }
+        actions.dispatch = { service in
+            guard let key = VoiceServiceStore.shared.profile(service).shortcut else { return }
+            key.post(isDown: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { key.post(isDown: false) }
+        }
+        VoiceServiceStore.shared.canEdit = { [weak self] _ in self?.actions.isBusy != true }
+        RemoteMappingStore.shared.onVoiceAction = { [weak self] service, _, _ in
+            guard let self else { return }
+            self.actions.request(service); self.poll()
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in self?.poll() }
         poll()
     }
-    private func send(_ service: VoiceInputMethod) {
-        guard VoiceServiceStore.shared.isUsable(service), let key = VoiceServiceStore.shared.profile(service).shortcut else { return }
-        if service == .codex && NSWorkspace.shared.frontmostApplication?.bundleIdentifier != service.bundleIdentifier {
-            message = "请先将 Codex 放到前台，再使用它的快捷键。"; return
-        }
-        key.post(isDown: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { key.post(isDown: false) }
-    }
     func poll() {
         let next = readConsumers()
-        let allowed = settings.allowed(next)
+        actions.tick(readers: next)
+        if voiceActionBusy != actions.isBusy { voiceActionBusy = actions.isBusy }
+        let allowed = next.filter { reader in actions.includes(reader) || !settings.allowed([reader]).isEmpty }
         if readers != next { readers = next }
         if eligible != allowed { eligible = allowed }
-        let active = !allowed.isEmpty && !paused
+        let active = (!allowed.isEmpty || actions.isBusy) && !paused && !actions.sourceFailed
+        if !active { passivePreparationFailed = false }
         updateUsage(active ? allowed : [])
         if active {
             pendingStop = nil
-            if !wanted { wanted = true; setRoute(true) }
+            if !wanted {
+                if !actions.isBusy {
+                    if passivePreparationFailed { onChanged?(); return }
+                    if let error = preparePassiveSources() {
+                        passivePreparationFailed = true; message = error; onChanged?(); return
+                    }
+                }
+                wanted = true; setRoute(true)
+            }
             for remote in streaming where !receivedFrame.contains(remote) && Date().timeIntervalSince(firstFrameAt[remote] ?? Date()) > 0.6 {
                 closeRemotes?(); streaming.remove(remote); firstFrameAt[remote] = nil
             }
-            if streaming.isEmpty, attempts < 3, Date().timeIntervalSince(lastRequest) > 0.8, let remote = preferredRemote?() {
+            if remoteEnabled(), streaming.isEmpty, attempts < 3, Date().timeIntervalSince(lastRequest) > 0.8, let remote = preferredRemote?() {
                 lastRequest = Date()
                 let result = openRemote?(remote)
                 if result == .sent { attempts += 1 }
             }
             message = "应用正在使用麦克风：" + Array(Set(allowed.map(\.name))).sorted().joined(separator: "、")
-            if preferredRemote?() == nil { message = "应用已请求麦克风，但遥控器尚未连接。" }
+            if remoteEnabled() && preferredRemote?() == nil { message = "应用已请求麦克风，但遥控器尚未连接。" }
             if attempts >= 3 && streaming.isEmpty { message = "遥控器暂未送来音频，请检查连接，或暂停后重新启用。" }
         } else if wanted || !streaming.isEmpty {
             if pendingStop == nil { pendingStop = Date() }
@@ -201,7 +244,8 @@ final class MicrophoneFollowController: ObservableObject {
             }
         } else { message = settings.specified && settings.applications.isEmpty ? "请添加允许触发开麦的应用" : "等待应用使用 AirType 麦克风" }
         if settings.specified && allowed.isEmpty && !next.isEmpty { message = "未在允许名单中：" + Array(Set(next.map(\.name))).sorted().joined(separator: "、") }
-        if paused { message = "遥控器麦克风已暂停，点击「恢复自动跟随」继续。" }
+        if !actions.status.isEmpty { message = actions.status }
+        if paused { message = "AirType 输入已暂停，点击「恢复 AirType 输入」继续。" }
         onChanged?()
     }
     func audioStarted(_ remote: VoiceRemoteID, reason: UInt8) {
@@ -212,7 +256,7 @@ final class MicrophoneFollowController: ObservableObject {
             let kind: SupportedRemoteID = remote == .chromecast ? .chromecast : .x6
             let button = RemoteProfiles.buttons(for: kind).first { $0.voiceControlled }!
             if RemoteMappingStore.shared.isEnabled(kind) { RemoteMappingStore.shared.post(button: button, remote: kind, isDown: true) }
-            else { send(VoiceServiceStore.shared.legacyService) }
+
         }
         poll()
     }
@@ -224,5 +268,5 @@ final class MicrophoneFollowController: ObservableObject {
         }
         lastRequest = .distantPast
     }
-    func stop() { timer?.invalidate(); timer = nil; wanted = false; updateUsage([]); setRoute(false); closeRemotes?(); attempts = 0 }
+    func stop() { actions.cancelAll(); timer?.invalidate(); timer = nil; wanted = false; updateUsage([]); setRoute(false); closeRemotes?(); attempts = 0 }
 }

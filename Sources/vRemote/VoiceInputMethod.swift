@@ -124,6 +124,13 @@ enum SystemInputRoute {
         print("[MIC-ROUTE] system input restored status=\(status)")
     }
 
+    static var currentUID: String? { defaultInputDevice().flatMap { uid(of: $0) } }
+    static var targetUID: String? { deviceID(named: targetDeviceName).flatMap { uid(of: $0) } }
+    static func selectInput(uid: String) -> Bool {
+        guard let device = deviceID(uid: uid) else { return false }
+        return setDefaultInputDevice(device) == noErr && currentUID == uid
+    }
+
     // MARK: - CoreAudio helpers
 
     private static func address(

@@ -74,10 +74,47 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     var onRouteChanged: ((Bool) -> Void)?
     private var macLevelAt = Date.distantPast
     private var captureConfigured = false
+    private var captureUID: String?
+    private var captureHasFrames = false
+    private var selectedCaptureDevice: AVCaptureDevice?
+    var sourceHealthError: String? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        if macInputEnabled, let device = selectedCaptureDevice, !device.isConnected {
+            return "选定的其他麦克风已断开，不自动替换音源。"
+        }
+        return nil
+    }
+    var otherInputReady: Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return !macInputEnabled || (captureHasFrames && selectedCaptureDevice?.isConnected == true)
+    }
+    /// Resolve before changing the system input. Excludes our virtual device to prevent feedback.
+    func prepareSources() -> String? {
+        let settings = AudioSourceSettings.shared
+        guard settings.remoteEnabled || settings.otherEnabled else { return "请至少选择一个麦克风音源。" }
+        guard isOutputDeviceAvailable else { return "找不到 AirType 虚拟麦克风，请检查音频驱动。" }
+        var resolved: String?
+        if settings.otherEnabled {
+            guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+                return "请先在系统设置中允许 AirType 使用麦克风，再启用其他麦克风。"
+            }
+            let available = AudioSourceSettings.captureDevices().map(\.uniqueID)
+            resolved = AudioSourceSettings.resolve(selection: settings.otherUID, priorDefault: SystemInputRoute.currentUID, available: available)
+            guard resolved != nil else { return "其他麦克风不可用，请在音频页选择具体设备；不会自动换用别的麦克风。" }
+        }
+        stateLock.lock()
+        let changed = captureUID != resolved
+        captureUID = resolved
+        if changed { captureHasFrames = false }
+        stateLock.unlock()
+        if changed { captureQueue.sync { releaseMacCapture() } }
+        setInputEnabled(mac: settings.otherEnabled, remote: settings.remoteEnabled, persist: false)
+        return nil
+    }
 
     init(onDemand: Bool = AppStorage.onDemandAudio,
-         macInputEnabled: Bool = AppStorage.macInputEnabled,
-         remoteInputEnabled: Bool = AppStorage.remoteInputEnabled) {
+         macInputEnabled: Bool = AudioSourceSettings.shared.otherEnabled,
+         remoteInputEnabled: Bool = AudioSourceSettings.shared.remoteEnabled) {
         self.onDemandAudio = onDemand
         self.macInputEnabled = macInputEnabled
         self.remoteInputEnabled = remoteInputEnabled
@@ -161,8 +198,8 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         if !active { onMacLevel?(-120) }
         print(
             active
-                ? "[AUDIO] 双麦克风混音开启 · X6 + MacBook · Mac 对齐延迟 120ms"
-                : "[AUDIO] 双麦克风混音关闭"
+                ? "[AUDIO] 选定音源已开启"
+                : "[AUDIO] 选定音源已关闭"
         )
         onRouteChanged?(active)
     }
@@ -262,6 +299,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         for input in captureSession.inputs { captureSession.removeInput(input) }
         captureSession.commitConfiguration()
         captureConfigured = false
+        stateLock.lock(); captureHasFrames = false; selectedCaptureDevice = nil; stateLock.unlock()
         print("[AUDIO] 电脑麦克风采集与设备绑定已释放")
     }
 
@@ -271,18 +309,10 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             if !captureSession.isRunning { captureSession.startRunning() }
             return
         }
-        let discovery = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInMicrophone],
-            mediaType: .audio,
-            position: .unspecified
-        )
-        let device = discovery.devices.first {
-            $0.uniqueID == "BuiltInMicrophoneDevice"
-        } ?? discovery.devices.first {
-            $0.localizedName.localizedCaseInsensitiveContains("MacBook")
-        }
+        stateLock.lock(); let uid = captureUID; stateLock.unlock()
+        let device = AudioSourceSettings.captureDevices().first { $0.uniqueID == uid }
         guard let device else {
-            print("[AUDIO] ⚠️ 找不到 MacBook 内置麦克风")
+            print("[AUDIO] 选定的其他麦克风不可用；不自动替换设备")
             return
         }
 
@@ -310,6 +340,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             captureSession.addOutput(output)
             captureSession.commitConfiguration()
             captureConfigured = true
+            stateLock.lock(); selectedCaptureDevice = device; stateLock.unlock()
 
             guard resourcePolicy.microphone else { releaseMacCapture(); return }
             captureSession.startRunning()
@@ -374,6 +405,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             macLevelAt = Date()
         }
 
+        stateLock.lock(); captureHasFrames = true; stateLock.unlock()
         guard isMixActive else { return }
         schedule(
             monoSamples: floats,
@@ -538,7 +570,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             }
 
             let macAvailable = pendingMac.count - pendingMacIndex
-            let macReady = max(0, macAvailable - Self.macAlignmentDelayFrames)
+            let macReady = max(0, macAvailable - (remoteInputEnabled ? Self.macAlignmentDelayFrames : 0))
             if macReady > 0 {
                 macTaken = min(frameCount, macReady)
                 mac.replaceSubrange(
