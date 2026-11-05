@@ -517,6 +517,7 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
 }
 
 private struct StudioMixerView: View {
+    @ObservedObject private var appearance = AppearanceSettings.shared
     @ObservedObject var model: ConsoleViewModel
     @ObservedObject private var sources = AudioSourceSettings.shared
     @ObservedObject private var follow = MicrophoneFollowController.shared
@@ -551,6 +552,8 @@ private struct StudioMixerView: View {
         .padding(.bottom, 16)
         .frame(width: 820, height: 760)
         .background(FrostedWindowBackground())
+        .background(WindowAppearanceBridge(selection: appearance.selection))
+        .preferredColorScheme(appearance.selection.colorScheme)
         .tint(ConsoleTheme.green)
         .font(.system(size: 13))
         .controlSize(.regular)
@@ -594,6 +597,18 @@ private struct StudioMixerView: View {
             if (sources.remoteEnabled && (!model.driverAvailable || !model.bluetoothGranted)) || !model.accessibilityGranted || !model.inputMonitoringGranted {
                 Button("检查设置") { model.selectedPage = .mixer }
             }
+            Menu {
+                Picker("外观", selection: $appearance.selection) {
+                    ForEach(AppAppearance.allCases) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+            } label: {
+                Label(appearance.selection.title, systemImage: appearance.selection.symbol)
+                    .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+            }.menuStyle(.borderlessButton).fixedSize()
+             .help("外观：跟随系统、浅色或深色。选择会保存在本机。")
+             .accessibilityLabel("外观：" + appearance.selection.title)
 
         }
         .padding(.horizontal, 0)
@@ -796,16 +811,6 @@ private struct AudioSourcesView: View {
                         .padding(20).frame(maxWidth: .infinity, alignment: .leading)
                         .background(panelBackground(ConsoleTheme.surface, radius: 12))
                 }
-                if sources.remoteEnabled { VStack(alignment: .leading, spacing: 12) {
-                        Toggle("MacBook 麦克风（旧 · Beta）", isOn: Binding(get: { sources.otherEnabled }, set: {
-                            sources.otherEnabled = $0
-                            sources.otherUID = AudioSourceSettings.builtInMicrophoneUID ?? "unavailable-built-in-microphone"
-                            model.onMacInputEnabledChanged?($0)
-                        })).disabled(controller.voiceActionBusy)
-                        .help("原项目的内置麦克风混音功能，尚未完成本机实测。默认关闭；Mac mini 无内置麦克风时自动跳过，不影响遥控器。")
-                        Text("可选：将 MacBook 内置麦克风与遥控器混音。尚待实机验证；设备不可用时自动跳过。")
-                            .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(panelBackground(ConsoleTheme.surface, radius: 12)) }
                 if sources.remoteEnabled {
                     MicrophoneFollowView()
                     Divider().overlay(ConsoleTheme.lineSoft)
@@ -820,11 +825,24 @@ private struct AudioSourcesView: View {
                         Spacer()
                     }
                 }
+                if sources.remoteEnabled { VStack(alignment: .leading, spacing: 12) {
+                        Toggle("MacBook 麦克风（旧 · Beta）", isOn: Binding(get: { sources.otherEnabled }, set: {
+                            sources.otherEnabled = $0
+                            sources.otherUID = AudioSourceSettings.builtInMicrophoneUID ?? "unavailable-built-in-microphone"
+                            model.onMacInputEnabledChanged?($0)
+                        })).disabled(controller.voiceActionBusy)
+                        .help("原项目的内置麦克风混音功能，尚未完成本机实测。默认关闭；Mac mini 无内置麦克风时自动跳过，不影响遥控器。")
+                        Text("可选：将 MacBook 内置麦克风与遥控器混音。尚待实机验证；设备不可用时自动跳过。")
+                            .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(panelBackground(ConsoleTheme.surface, radius: 12)).id("beta") }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 16)
         }.onAppear {
             #if DEBUG
             if CommandLine.arguments.contains("--review-actions") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("actions", anchor: .top) }
+            }
+            if CommandLine.arguments.contains("--review-beta") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("beta", anchor: .bottom) }
             }
             if CommandLine.arguments.contains("--review-checks") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("checks", anchor: .top) }
@@ -2314,6 +2332,7 @@ enum P1UIReview {
             try? encoder.encode(demo).write(to: AirTypeEnvironment.usageFile)
             LocalUsageStore.shared.setEnabled(true)
         }
+        AppearanceSettings.shared.selection = CommandLine.arguments.contains("--review-dark") ? .dark : (CommandLine.arguments.contains("--review-system") ? .system : .light)
         app.setActivationPolicy(.regular)
         let view = StudioMixerView(model: model)
         let window = NSWindow(contentRect: NSRect(x: 200, y: 120, width: 820, height: 760),

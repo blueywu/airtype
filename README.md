@@ -1,251 +1,157 @@
 # AirType
 
-## AirType shell and next work
+把蓝牙遥控器变成 Mac 上的小键盘，也可以把它当作麦克风。
 
-The previous tested main baseline was `0f53854`. Shell cleanup is developed separately on
-`codex/airtype-shell`: display-name rebrand, Settings/Quit-only menu, visible
-custom-record controls beside preset mapping menus, and removal of payment UI,
-its prompting code and all active app/site payment images. A stale diagnostic
-recording opt-in is disabled at startup because its menu controls were removed;
-existing recording files are not deleted. Dedicated advanced preferences will
-be consolidated later. Internal bundle/executable/driver identifiers remain
-unchanged. The packaged folder is now `AirType.app`.
+AirType 常驻菜单栏。你可以用遥控器复制、粘贴、执行自定义快捷键；需要语音输入时，再开启遥控器麦克风，把声音交给 Typeless、Codex 等应用处理。
 
-See [ROADMAP.md](ROADMAP.md) for priorities and acceptance conditions. Menu SVG
-candidates in `Design/AirType-Menubar/` are review artifacts only. The current
-application image remains pending approval; no generated logo has been made.
+AirType 负责按键映射和音频桥接，不负责语音识别。按键和音频处理在本机完成；听写软件是否联网、如何处理声音，由该软件自己的设置和服务决定。
 
+当前为本地测试版本 **1.1.5**。本 README 暂不包含截图和详细教程，待版本稳定后补充。
 
-## Optional on-demand audio
+## 可以做什么
 
-Branch `codex/on-demand-audio` adds **按需启停音频** to the Audio page.
-It is **off by default**, preserving the upstream compatibility mode. Toggle
-it on to stop and destroy this app's virtual-audio IOProc while idle and to
-release any computer microphone capture inputs/outputs. Start a voice session
-to open audio again; toggle off to restore compatibility without reinstalling.
-The choice persists across launches. Bluetooth/HID observation remains active.
-Other apps that independently use a microphone may still show a macOS privacy
-indicator even when this application's audio resources are released.
+- **按键映射**：常用快捷键预设、自定义按键录制，区分左右修饰键；配置按遥控器型号保存。
+- **遥控器收音**：将遥控器声音送进虚拟麦克风 `vRemoteDr 2ch`，供录音或听写应用选择。
+- **语音动作**：为不同应用分别配置听写快捷键，再绑定到遥控器按钮。
+- **按使用情况开麦**：跟随所有使用 AirType 麦克风的应用，或只允许指定应用触发。多个应用可以同时读取，最后一个停止使用后关麦。
+- **本地使用记录**：可选记录、导出和清空；查看近 7 天或 30 天的使用时长趋势和 App 次数占比。
+- **外观**：原生半透明窗口，支持跟随系统、浅色和深色。右上角的外观按钮独立于三个设置页面，选择会保存在本机。
 
-The output device is discovered separately from running its audio stream, so
-an installed-but-idle driver is shown as available. The virtual output starts
-synchronously before the host shortcut/first remote buffer. Physical capture
-configuration is serialized; queued work and permission callbacks re-check the
-latest intent, including shutdown. On-demand mode also releases the route on
-last-remote disconnection and ignores late host activation until a new intent
-or inactive state; compatibility mode retains upstream disconnect behavior.
+## 支持范围
 
-Validation on 2026-11-04: 34 policy/real-HAL lifecycle assertions, 51 session
-assertions and 29 shortcut assertions pass. HAL tests use only silent samples,
-never activate a physical microphone, and never change user preferences. Three
-open/feed/close cycles render the first queued buffer and destroy their IOProc;
-active mode switching, idle rollback and mute/unmute also pass. Debug/Release
-builds and ad-hoc signature checks pass. In GUI startup samples, on-demand idle
-reports CoreAudio runningInput=0/runningOutput=0; compatibility reports 1/1.
-System default audio device IDs are unchanged. Actual speech quality, physical
-microphone shutdown and the visual menu-bar indicator still need user testing.
-No installed application or audio driver is replaced by these checks.
+当前接入以下遥控器：
 
-## Recordable voice shortcuts
+| 设备 | USB/HID 标识 |
+| --- | --- |
+| Google Chromecast Voice Remote | VID `0x18D1` / PID `0x9450` |
+| X6 Remote | VID `0x1D5A` / PID `0xC081` |
 
-Branch `codex/recordable-voice-shortcuts` extends the local-only version.
+其他型号，包括不同代的 Google TV 遥控器，不能仅凭外观或商品名称判断兼容。X6 的部分功能由设备固件内部处理，无法单独映射。
 
-1. Open **按键映射** and choose **Typeless** under the voice app selector.
-2. Click the shortcut button, press your actual keyboard shortcut, then click
-   **保存**. **取消** or **Esc** keeps the previous setting. Left and right
-   modifiers are distinct. Modifier-only keys, modifier chords and Fn + Space
-   are supported; mouse buttons are not recorded by this keyboard recorder.
-3. In Typeless, choose `vRemoteDr 2ch` as the microphone and configure the same
-   shortcut. Typeless defaults to Right Cmd here, matching the requested setup;
-   you can record any supported keyboard shortcut instead.
-4. The selector chooses the recording process to observe, not the keyboard input
-   source. Available targets are Doubao, WeType, Typeless and Codex Dictation.
-   Each target saves its own shortcut. For Codex, first configure and test its
-   in-app dictation shortcut, then record that shortcut here. Select its audio
-   input in the voice app as supported; this branch does not change the system
-   input for Typeless or Codex.
+内置语音动作支持 **Typeless、Codex、豆包输入法、微信输入法**。豆包和微信相关配置标记为“旧”。这些是快捷键与应用状态的适配，不包含对应应用的安装或语音识别服务。
 
-The recorder diverts keyboard events when the recording window is key and the
-app's global Accessibility event tap is available. Without that permission,
-local AppKit capture still works but system-wide hotkeys may also reach their
-own applications. Grant Accessibility/Input Monitoring before configuring.
-New shortcuts are replayed as native modifier edges with left/right device
-flags and normal key down/up edges. Legacy custom mappings and modifier presets
-remain readable. Typeless/Codex capture state includes namespaced CoreAudio
-helper processes and a three-second start grace period.
+其他录音应用可以通过“自动跟随”或“指定应用”使用 AirType 麦克风，无需专用语音动作。新增应用适配欢迎提交 [Issue](https://github.com/blueywu/airtype/issues) 或 [Pull Request](https://github.com/blueywu/airtype/pulls)。
 
-Validation: 29 shortcut regression assertions and all 43 existing voice-session
-assertions pass. Debug/Release builds and ad-hoc signature verification pass.
-The actual AppKit sheet was exercised with internal Right Cmd events; the
-captured value was visible in a screenshot. This is not a physical-keyboard or
-remote-to-Typeless acceptance test. No installed app or driver is replaced by
-building this branch. End-to-end voice input still needs hardware validation.
-The local-only removals below remain in effect.
+## 安装与更新
 
-## Local-only branch
+按键功能需要支持的遥控器、蓝牙连接及相应系统权限。遥控器收音还需要安装音频驱动，使系统中出现 `vRemoteDr 2ch`。
 
-`codex/local-only` is based on `ccc333cn-edition` at
-`f3e310f73361b81cc67280a47a2435b8069ddf08`.
+**首次使用**：在 macOS 蓝牙设置中配对遥控器，将 `AirType.app` 放入“应用程序”后打开。根据“语音设置 → 设备与权限”的提示，检查辅助功能、输入监控、蓝牙及所需的麦克风权限。驱动构建与安装说明见 [Driver/README.md](Driver/README.md)。单独的 App ZIP 不包含驱动。
 
-- Removes automatic/manual update checks and installer downloads.
-- Removes TelemetryDeck, its Swift package dependency, and all analytics calls.
-- Removes the remote-store configuration, purchase UI, and commerce assets.
-- Keeps the fork's four remote/input-method fixes and the existing audio driver integration.
-- The application has no remaining HTTP client or remote image loading code. Bluetooth is still required for the remote.
-- Support/payment UI and its assets have been removed in the AirType shell branch.
+**替换已有版本**：结束听写，从菜单栏退出 AirType，将新版 `AirType.app` 拖到“应用程序”并替换，再从该目录打开。同一个设备上正常替换应用会沿用原有偏好和记录；驱动未变时无需重装驱动。系统若要求重新授权，按实际提示处理。
 
-Build with `./package-app.sh`; protocol tests use `./run-self-tests.sh`.
-Voice-session tests use `swift run vRemote --voice-session-self-test` in a debug build
-(or run `.build/debug/vRemote --voice-session-self-test` after `swift build`).
-Building the application does not install its HAL audio plug-in. The plug-in,
-hardware permissions, a supported remote, and a compatible input method are
-required for end-to-end voice input. Typeless/Codex integration is described in the recordable-shortcuts section above.
+当前构建使用本地 ad-hoc 签名，未完成 Developer ID 签名和公证。当前验证以 Apple Silicon Mac 为主，其他系统版本、芯片架构和设备组合仍需实测。
 
-On this machine, the macOS 27 Command Line Tools SDK lacks the SwiftUI macro
-plug-in required by its `@State` implementation. The existing macOS 26.5 SDK
-works; `package-app.sh` forwards additional arguments to SwiftPM:
+## 三个设置页面
+
+### 1. 按键映射
+
+先选遥控器型号，再开启“启用按键控制”。可以选择常用操作，也可以点击“录制”捕捉自定义组合键。恢复默认前会提示影响范围，只重置当前型号。
+
+只想把遥控器当小键盘时，关闭“语音设置”右上角的“遥控器麦克风”即可。普通按键直接发送快捷键，录音仍使用目标应用自己的输入选择。已保存的应用语音绑定在此模式下也只发送对应快捷键，不由 AirType 主动接管输入。
+
+### 2. 语音设置
+
+右上角的“遥控器麦克风”是总开关。开启后，再选择开麦方式和语音动作。
+
+| 开麦方式 | 什么时候启用遥控器麦克风 |
+| --- | --- |
+| 自动跟随 | 任意应用实际开始读取 AirType 麦克风时开启；全部停止使用后关闭。 |
+| 指定应用 | 已启用语音动作的应用，或额外名单中的应用实际读取 AirType 麦克风时开启。 |
+
+从键盘、鼠标或遥控器启动录音都可以触发上述行为。前提是录音应用实际使用 `vRemoteDr 2ch`；仅把它选为系统输入，不会持续开麦。Mac mini 没有其他麦克风时，也可以通过键盘启动听写并使用遥控器收音。
+
+要让遥控器按钮主动启动听写：在“语音动作”中录制与目标应用一致的快捷键、启用该动作，再到“按键映射”绑定。AirType 会准备音源、临时选择虚拟输入，再发送听写快捷键；会话结束后尝试恢复原输入。用户中途手动选择的新输入不会被强行改回。
+
+**Codex 语音动作目前要求 Codex 位于前台。** 它不是在任意应用前台都能启动的全局听写入口。
+
+页面标题旁的问号提供场景和系统设备说明，可悬停或点击查看。
+
+最底部保留两个低频选项：
+
+- **保持音频通道开启（旧）**：原项目的常驻音频兼容行为，通常保持关闭。
+- **MacBook 麦克风（旧 · Beta）**：可选内置麦克风混音，默认关闭，仅在遥控器麦克风开启后可见。尚待完整实机验证。设备不可用时跳过，不应影响遥控器单独使用；不再提供任意外接麦克风选择。
+
+### 3. 使用记录
+
+记录默认关闭，开启后开始积累。关闭后停止新增，已有历史保留；可以导出 JSON 或清空。
+
+图表只汇总已有记录，不会补造安装前的数据：
+
+- 折线图按本地日历和会话开始日期汇总使用时长。
+- App 占比按已确认会话的次数计算。
+- 未确认的会话不计入图表；中断后未知的时长不补算。
+
+麦克风使用可能包含预览和停顿；多个应用同时读取时，记录时长可能重叠。它不是净说话时间、语音识别准确率，也不代表文字最终输入到了哪个应用。
+
+## 音频设备与常见疑问
+
+**为什么声音输出里也能看到 `vRemoteDr 2ch`？**
+
+它是驱动提供的虚拟音频设备，可能同时出现在系统输入和输出列表。录音应用应把它选作输入；播放仍选择实际扬声器或耳机。误把虚拟设备选作播放输出，可能听不到声音。
+
+**指定应用模式会隐藏设备，或阻止其他应用读取吗？**
+
+不会。它决定谁能触发开麦，不是系统级的音频访问隔离。开麦期间，其他有权限且选择同一输入的应用仍可能读取声音。
+
+**关闭遥控器麦克风后，为什么听写没声音？**
+
+检查目标应用是否仍选择 `vRemoteDr 2ch`。关闭 AirType 收音不会自动替你挑另一只麦克风，需要将该应用切回实际输入设备。Mac mini 没有其他麦克风时，需要重新开启遥控器收音。
+
+**遥控器已经连接，为什么不亮录音灯？**
+
+连接、选中设备、实际使用麦克风是不同状态。先检查总开关，再确认应用选择 AirType 输入并开始使用；指定应用模式还需检查对应动作或名单。某些应用停止保存录音后仍保持麦克风预览，可能继续触发开麦。
+
+## 本地数据与联网
+
+AirType 已移除原项目的更新检查、TelemetryDeck 统计、远程购买配置和打赏入口。应用不上传录音或识别文字；蓝牙用于连接遥控器。手动点击项目反馈链接会由浏览器打开 GitHub。
+
+使用记录只保存时间、时长、应用标识和会话状态等元数据，不保存音频、识别文字、窗口标题、网页地址或剪贴板。连接与音频状态日志也保存在本机。
+
+为沿用旧配置，内部名称仍保留 `vRemote`：
+
+- 使用记录：`~/Library/Application Support/vRemote/Usage/sessions-v1.json`
+- 诊断日志：`~/Library/Logs/vRemote/vRemote.log`
+- 系统音频设备：`vRemoteDr 2ch`
+
+外观、按键和语音配置保存在本机应用偏好中。
+
+## 从源码构建
+
+需要 macOS、Xcode 或兼容的 Command Line Tools 与 Swift 工具链。在仓库目录执行：
 
 ```sh
-./package-app.sh --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk --build-system native
-```
-
-Validation on 2026-11-04: Debug and Release builds passed; all three protocol
-regressions and 43 voice-session assertions passed. The signed local app showed
-its main window and remained running for 15 seconds under a network-denying
-sandbox, with no Internet sockets in four samples, then exited normally.
-Default audio output IDs were unchanged. Source and bundle scans found no
-remaining telemetry, update/commerce client, remote images, or external Swift
-dependencies. The app uses an ad-hoc signature, not Developer ID notarization.
-The HAL driver was not installed, the remote was not connected, and
-Accessibility/Input Monitoring permissions were absent; voice capture, key
-mapping, Typeless, HomePod, and Bluetooth audio device interoperability remain
-unverified.
-
-The sections below describe the upstream project and its original distribution;
-their update/commerce instructions do not apply to this local-only branch.
-
-> 本仓库保存 vRemoter 的源码、设计源稿、构建脚本与测试。普通用户请通过 `vincentstudio.org` 系列域名访问官网、下载与更新服务。
-
-[官方网站](https://vremoter.vincentstudio.org/) · [下载最新版](https://updates.vincentstudio.org/vremoter/) · [v1.1.1 Release](https://github.com/VincentKingHsu/vRemoter/releases/tag/v1.1.1)
-
-## 关于这个分支（ccc333cn-edition）
-
-这是基于官方 v1.1.1 的社区修改分支，不是作者发布的版本。在官方代码之上加了以下改动，每一项都已单独向作者提交 PR：
-
-| 改动 | 对应 PR |
-|---|---|
-| Chromecast 快速轻点语音键时，遥控器麦克风未开启会自动重开 | [#9](https://github.com/VincentKingHsu/vRemoter/pull/9) |
-| 启用映射时 seize 被拒绝（`0xE00002C1`）后回退到共享模式 | [#10](https://github.com/VincentKingHsu/vRemoter/pull/10) |
-| 支持微信输入法（WeType）作为语音输入法 | [#11](https://github.com/VincentKingHsu/vRemoter/pull/11) |
-| 遥控器语音连接断开后自动重连，不再一直停在“正在连接语音服务” | [#12](https://github.com/VincentKingHsu/vRemoter/pull/12) |
-
-以下是官方 README 原文。
-
-## 产品定位
-
-vRemoter 把蓝牙语音遥控器变成 macOS 上的 Vibe Coding 控制器：遥控器语音键控制豆包输入法，遥控器麦克风与 MacBook 麦克风混合为同一个 CoreAudio 输入设备 `vRemoteDr 2ch`。
-
-已接入的遥控器：
-
-- X6-Remote（VID `0x1D5A` / PID `0xC081`）
-- Google Chromecast Remote（VID `0x18D1` / PID `0x9450`）
-
-Chromecast Remote 已实现语音键双模式：短按第一次打开、第二次关闭；长按时持续录音，松手自动关闭。APP 还提供按型号保存的按键映射，可把方向、确认、返回、Home、YouTube、Netflix、信源、音量等按键改为常用 macOS 操作。
-
-当前版本：`1.1.1`
-
-## 1.1.1 修复
-
-- 修复 Chromecast Voice Remote 使用一段时间后，短按偶尔只打开豆包、遥控器麦克风却未持续收音的问题。
-- 修复电脑 Option 关闭豆包时，较晚到达的音频状态可能短暂重新开启遥控器音频的问题。
-- 改进双遥控器同时连接时的会话隔离、开麦确认与有限重试。
-- 修复 X6 第一次短按开麦可能被误判为旧音频事件的问题。
-- 更新按键映射页中的 Chromecast Remote 产品图。
-
-## 1.1.0 新功能
-
-- 新增 Chromecast Voice Remote（VID `0x18D1` / PID `0x9450`）语音与按键支持。
-- 新增 X6 Remote 与 Chromecast Voice Remote 按键映射页面。
-- 豆包语音触发键可选择 Option、Command、Control、Shift 或 Fn，默认 Option；所选按键必须与豆包输入法设置一致。
-- 映射设置跟随型号，不绑定某一只遥控器；更换同型号设备后继续沿用。
-- 启用映射后拦截设备原始动作，再由 vRemoter 发送所选键盘、媒体键或自定义快捷键；关闭映射即可恢复系统原行为。
-- 主控制台去掉 X6 专属措辞，X6 与 Chromecast Remote 可以同时连接。
-
-![vRemoter 1.1.1 音频控制台](docs/assets/screenshots/vremoter-audio-1.1.1.png)
-
-![vRemoter 1.1.1 Chromecast 按键映射](docs/assets/screenshots/vremoter-mapping-chromecast-1.1.1.png)
-
-完整历史见 [CHANGELOG.md](CHANGELOG.md)。
-
-当前支持边界：Chromecast 仅确认上述 VID/PID；X6 鼠标模式切换键由设备固件内部处理，不能单独重映射。语音键保留给豆包语音控制。Fn 的实际行为取决于 Mac 与豆包配置，建议首次使用时现场测试。
-
-## 仓库与公开服务边界
-
-| 内容 | 位置 | 是否公开 |
-|---|---|---|
-| APP、驱动构建、测试与设计 | 本 GitHub 仓库 | 是 |
-| 官网静态源文件 | `docs/` | 是，部署结果见官网 |
-| 官网 | [vremoter.vincentstudio.org](https://vremoter.vincentstudio.org/) | 是 |
-| 更新、PKG/DMG、购买配置 | [updates.vincentstudio.org/vremoter](https://updates.vincentstudio.org/vremoter/) | 是 |
-| 原始宣传视频与市场素材 | 仓库外 `../marketing/` | 否，不上传 Git |
-
-遥控器相关 GitHub 仓库：
-
-- [VincentKingHsu/vRemoter](https://github.com/VincentKingHsu/vRemoter)
-- [VincentKingHsu/x6-remote-voice-bridge](https://github.com/VincentKingHsu/x6-remote-voice-bridge)
-- [VincentKingHsu/MiRemoteVoice](https://github.com/VincentKingHsu/MiRemoteVoice)
-
-## 目录
-
-- `Sources/vRemote/`：APP 主程序、BLE/ATVV、双麦混音、UI、更新与购买配置。
-- `Driver/`：生成 `vRemoteDriver.driver` 的实验性构建脚本。
-- `Packaging/`：APP 元数据、本地化与 PKG 安装脚本。
-- `Resources/`：APP 内置权限向导、商业入口与支持开发图片。
-- `SelfTests/`：硬件协议与更新配置回归数据。
-- `Design/`：冻结 UI 和 Logo 的 Figma 本地插件源稿。
-- `docs/`：公开官网静态源文件。
-- `Server/`：马来西亚服务器配置与发布清单模板。
-- `OPERATIONS.md`：从构建到上线和回滚的操作手册。
-
-## 构建
-
-```bash
-./run-self-tests.sh
+swift build
 ./package-app.sh
-./build-pkg.sh
-./build-dmg.sh
 ```
 
-- `PKG`：首次安装或驱动发生变化时使用，包含 APP 与音频驱动。
-- `DMG`：仅更新 APP，适合已经安装过驱动且本次驱动未变化的用户。
+打包结果为 `dist/build/AirType.app`。构建不会自动安装应用或音频驱动。
 
-1.1.1 的驱动没有变化：PKG 供首次安装，DMG 供已经安装过驱动的用户覆盖更新。当前发布包尚未完成 Developer ID 签名与公证，下载页必须明确标注这一状态；正式广泛分发前仍须完成签名、公证与真实机器安装验证。
+当前开发环境使用 macOS 26.5 SDK；默认 SDK 与工具链不匹配时，可以明确指定：
 
-## 更新策略
+```sh
+./package-app.sh \
+  --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
+  --build-system native
+```
 
-APP 从以下地址读取版本清单：
+Debug 构建包含回归检查入口，例如：
 
-`https://updates.vincentstudio.org/vremoter/releases.json`
+```sh
+.build/debug/vRemote --voice-routing-self-test
+.build/debug/vRemote --microphone-follow-self-test
+.build/debug/vRemote --voice-actions-self-test
+.build/debug/vRemote --audio-lifecycle-self-test
+.build/debug/vRemote --shortcut-self-test
+.build/debug/vRemote --voice-session-self-test
+```
 
-- 普通 APP 更新：清单中同时提供 DMG/PKG，APP 自动优先下载 DMG。
-- 驱动更新：将 `driver_update_required` 设为 `true`，APP 强制下载 PKG。
-- 首次安装：官网始终推荐 PKG。
+音频相关检查需要可用的 CoreAudio 环境和驱动。自动检查通过不等于所有遥控器、输入法和硬件组合都已完成端到端验证。
 
-购买链接从以下地址动态读取：
+## 来源与许可
 
-`https://updates.vincentstudio.org/vremoter/commerce.json`
+AirType 基于 [VincentKingHsu/vRemoter](https://github.com/VincentKingHsu/vRemoter) 及 [ccc333cn/vRemoter](https://github.com/ccc333cn/vRemoter) 的修改版本继续开发，保留遥控器协议、音频驱动接入及相关修复，并重组了本地使用流程。
 
-修改公开配置即可控制购买入口，不需要重新发布 APP。没有启用且有效的购买链接时，APP 会隐藏“购买遥控器”按钮。
+应用源码沿用 [MIT License](LICENSE)，原版权声明保留。音频驱动基于 BlackHole，使用独立的 GPL v3 许可证；驱动构建方式及来源见 [驱动说明](Driver/README.md) 和 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
-## 发布前阻断项
-
-1. 当前驱动是对 BlackHole GPL v3 二进制的修改构建。公开分发前必须选择：提供驱动对应源码与构建材料，或取得适用于闭源分发的商业授权。
-2. APP、驱动与 PKG/DMG 尚需 Developer ID 签名和 notarization。
-3. 每次发布都要验证首次 PKG 安装、DMG 覆盖更新、自动检查更新、购买链接刷新和卸载/回滚。
-
-## 相关文档
-
-- [完整发布与服务器运维手册](OPERATIONS.md)
-- [第三方许可说明](THIRD_PARTY_NOTICES.md)
-- [音频驱动说明](Driver/README.md)
-- [冻结 UI 说明](Design/vRemoter-UI-v1-Frozen/UI-FREEZE.md)
+反馈问题时，请附上 AirType 版本、macOS 版本、遥控器型号、目标应用，以及能够重现问题的操作顺序。请先检查诊断内容，避免提交自己的录音或其他私人信息。
