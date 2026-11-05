@@ -38,17 +38,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let x6 = X6HIDBridge()
     private let chromecastHID = ChromecastRemoteHIDBridge()
     private let x6SearchSuppressor = X6SearchSuppressor()
-    private let doubaoAudioState = VoiceAudioHub(selected: VoiceServiceStore.shared.available.first ?? .typeless)
-    private lazy var x6Session: X6SessionCoordinator = X6SessionCoordinator(
-        doubaoState: doubaoAudioState,
-        triggerTap: { [weak self] in self?.voiceActions.postCurrentShortcut() },
-        openingTimeout: { [weak self] in self?.doubaoAudioState.selected.openingTimeout ?? 3 },
-        canAdoptExternal: { [weak self] in
-            guard let self else { return false }
-            return VoiceServiceStore.shared.isUsable(self.doubaoAudioState.selected)
-        }
-    )
-    private lazy var voiceActions: VoiceActionRouter = VoiceActionRouter(hub: doubaoAudioState, session: x6Session)
+    private let microphoneFollow = MicrophoneFollowController.shared
     private let debugWindow = DebugWindowController()
     private let x6BLE = BLEBridge(
         nameHint: "X6-Remote",
@@ -123,26 +113,27 @@ final class AppController: NSObject, NSApplicationDelegate {
         // X6 does not emit a dependable HID edge on its first short press.
         // HID remains observation/search-suppression only; immediate voice
         // session control comes from AUDIO_START/AUDIO_STOP below.
-        x6.onShortPress = { [weak self] in
-            self?.voiceActions.remoteHIDShortPress()
+        x6.onShortPress = {
+            // Voice actions are dispatched by the physical audio edge.
         }
-        x6.onLongPressEnded = { [weak self] in
-            self?.voiceActions.remoteHIDLongPressEnded()
+        x6.onLongPressEnded = {
+            // Input consumers own microphone lifetime.
         }
         x6.onNativeSearchEdge = { [weak self] in
             self?.x6SearchSuppressor.arm()
         }
-        x6SearchSuppressor.onServiceDown = { [weak self] method in
-            self?.voiceActions.keyboardDown(method) ?? false
+        x6SearchSuppressor.onServiceDown = { _ in
+            false
         }
-        x6SearchSuppressor.onServiceUp = { [weak self] method in
-            self?.voiceActions.keyboardUp(method)
+        x6SearchSuppressor.onServiceUp = { _ in
+            // The physical shortcut already reaches its application.
         }
         x6BLE.onConnectionChanged = { [weak self] connected in
             self?.x6BLEConnected = connected
+            if connected { self?.microphoneFollow.connectionChanged() }
             if !connected {
                 self?.x6RemoteStreaming = false
-                self?.voiceActions.remoteDisconnected(.x6)
+                self?.microphoneFollow.audioStopped(.x6)
             }
             self?.refreshCombinedStreaming()
             self?.updateStatus()
@@ -154,20 +145,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         x6BLE.onAudioStarted = { [weak self] reason, _ in
             self?.lastVoiceRemote = .x6
-            self?.voiceActions.remoteAudioStarted(
-                remote: .x6,
-                reason: reason
-            )
+            self?.microphoneFollow.audioStarted(.x6, reason: reason)
         }
         x6BLE.onAudioStopped = { [weak self] reason in
-            self?.voiceActions.remoteAudioStopped(remote: .x6, reason: reason)
+            self?.microphoneFollow.audioStopped(.x6)
         }
         x6BLE.onMicrophoneOpenFailed = { [weak self] code in
-            self?.x6Session.remoteMicrophoneOpenFailed(
-                remote: .x6,
-                code: code
-            )
+            self?.microphoneFollow.audioStopped(.x6)
         }
+        x6BLE.onFirstAudioFrame = { [weak self] in self?.microphoneFollow.frameReceived(.x6) }
         x6BLE.onLevel = { [weak self] db, _ in
             guard AudioPipe.shared.isRemoteInputEnabled else { return }
             self?.debugWindow.updateRemoteLevel(db)
@@ -179,9 +165,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         chromecastBLE.onConnectionChanged = { [weak self] connected in
             self?.chromecastBLEConnected = connected
+            if connected { self?.microphoneFollow.connectionChanged() }
             if !connected {
                 self?.chromecastRemoteStreaming = false
-                self?.voiceActions.remoteDisconnected(.chromecast)
+                self?.microphoneFollow.audioStopped(.chromecast)
             }
             self?.refreshCombinedStreaming()
             self?.updateStatus()
@@ -193,64 +180,29 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         chromecastBLE.onAudioStarted = { [weak self] reason, _ in
             self?.lastVoiceRemote = .chromecast
-            self?.voiceActions.remoteAudioStarted(
-                remote: .chromecast,
-                reason: reason,
-                supportsPhysicalHoldGesture: true
-            )
+            self?.microphoneFollow.audioStarted(.chromecast, reason: reason)
         }
         chromecastBLE.onAudioStopped = { [weak self] reason in
-            self?.voiceActions.remoteAudioStopped(
-                remote: .chromecast,
-                reason: reason
-            )
+            self?.microphoneFollow.audioStopped(.chromecast)
         }
         chromecastBLE.onFirstAudioFrame = { [weak self] in
-            self?.x6Session.remoteAudioFrameReceived(remote: .chromecast)
+            self?.microphoneFollow.frameReceived(.chromecast)
         }
         chromecastBLE.onMicrophoneOpenFailed = { [weak self] code in
-            self?.x6Session.remoteMicrophoneOpenFailed(
-                remote: .chromecast,
-                code: code
-            )
+            self?.microphoneFollow.audioStopped(.chromecast)
         }
         chromecastBLE.onLevel = { [weak self] db, _ in
             guard AudioPipe.shared.isRemoteInputEnabled else { return }
             self?.debugWindow.updateRemoteLevel(db)
         }
-        x6Session.preferredRemoteProvider = { [weak self] in
-            self?.preferredVoiceRemote()
+        microphoneFollow.preferredRemote = { [weak self] in self?.preferredVoiceRemote() }
+        microphoneFollow.openRemote = { [weak self] remote in
+            guard AudioPipe.shared.isRemoteInputEnabled else { return .unavailable }
+            return self?.openRemoteMicrophone(remote, bypassDebounce: true) ?? .unavailable
         }
-        x6Session.onMicrophoneCloseRequested = { [weak self] in
-            self?.closeAllRemoteMicrophones()
-        }
-        x6Session.onRemoteMicrophoneCloseRequested = { [weak self] remote in
-            switch remote {
-            case .x6: self?.x6BLE.closeMicrophone(force: true)
-            case .chromecast: self?.chromecastBLE.closeMicrophone(force: true)
-            }
-        }
-        x6Session.onMicrophoneOpenRequested = {
-            [weak self] remote, bypassDebounce in
-            guard AudioPipe.shared.isRemoteInputEnabled else {
-                print("[AUDIO] 遥控器未勾选，跳过主动开麦")
-                return .unavailable
-            }
-            return self?.openRemoteMicrophone(
-                remote,
-                bypassDebounce: bypassDebounce
-            ) ?? .unavailable
-        }
-        x6Session.onStateChanged = { [weak self] status in
-            self?.updateStatus()
-        }
-        voiceActions.onStatus = { [weak self] text in
-            self?.debugWindow.updateVoiceActionStatus(text)
-            self?.updateStatus()
-        }
-        voiceActions.start()
-        SystemInputRoute.apply(for: doubaoAudioState.selected)
-        x6Session.start()
+        microphoneFollow.closeRemotes = { [weak self] in self?.closeAllRemoteMicrophones() }
+        microphoneFollow.onChanged = { [weak self] in self?.updateStatus() }
+        microphoneFollow.start()
         x6SearchSuppressor.start()
         x6.start()
         x6BLE.start()
@@ -274,11 +226,13 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func updateStatus() {
         let anyHID = x6HIDConnected || chromecastHIDConnected
         let anyBLE = x6BLEConnected || chromecastBLEConnected
-        let doubaoSnapshot = doubaoAudioState.snapshotNow()
+        let doubaoSnapshot = DoubaoAudioStateMonitor.Snapshot(
+            state: microphoneFollow.eligible.isEmpty ? .inactive : .active, pid: nil, processObjectID: nil,
+            inputDeviceIDs: [], inputDeviceNames: microphoneFollow.eligible.isEmpty ? [] : ["vRemoteDr 2ch"])
         let doubaoUsesVRemote = doubaoSnapshot.inputDeviceNames.contains("vRemoteDr 2ch")
         let statusText: String
         if doubaoSnapshot.isRecording && !doubaoUsesVRemote {
-            let name = doubaoAudioState.selected.shortName
+            let name = "AirType"
             statusText = L10n.text("\(name)输入设备错误", "Incorrect \(name) input")
         } else if remoteStreaming {
             statusText = L10n.text("遥控器录音中", "Remote recording")
@@ -290,7 +244,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             statusText = L10n.text("等待遥控器", "Waiting for remote")
         }
         statusItem.button?.toolTip = "AirType · \(statusText)"
-        debugWindow.updateActiveService(doubaoAudioState.selected)
+        debugWindow.updateVoiceActionStatus(microphoneFollow.message)
         debugWindow.update(
             status: statusText,
             hidConnected: anyHID,
@@ -337,8 +291,9 @@ final class AppController: NSObject, NSApplicationDelegate {
                 self?.x6BLE.closeMicrophone(force: true)
                 self?.chromecastBLE.closeMicrophone(force: true)
                 self?.debugWindow.updateRemoteLevel(-120)
-            } else if self?.doubaoAudioState.snapshotNow().isRecording == true {
-                self?.openPreferredRemoteMicrophone()
+            } else {
+                self?.microphoneFollow.connectionChanged()
+                self?.microphoneFollow.poll()
             }
             self?.updateStatus()
         }
@@ -364,7 +319,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func stopMicrophoneNow() {
-        x6Session.forceClose()
+        microphoneFollow.pause()
         x6BLE.closeMicrophone(force: true)
         chromecastBLE.closeMicrophone(force: true)
         AudioPipe.shared.setRemoteActive(false)
@@ -448,8 +403,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         x6.stop()
         chromecastHID.stop()
         x6SearchSuppressor.stop()
-        voiceActions.stop()
-        x6Session.stop()
+        microphoneFollow.stop()
         x6BLE.stop()
         chromecastBLE.stop()
         AudioPipe.shared.stop()
@@ -460,6 +414,11 @@ final class AppController: NSObject, NSApplicationDelegate {
 // MARK: - Entry
 
 #if DEBUG
+if CommandLine.arguments.contains("--microphone-reader-test") { exit(MicrophoneFollowSelfTest.readerProbe() ? 0 : 1) }
+if CommandLine.arguments.contains("--microphone-readers-inspect") { MicrophoneFollowSelfTest.inspectReaders(); exit(0) }
+if CommandLine.arguments.contains("--microphone-follow-self-test") {
+    exit(MicrophoneFollowSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
+}
 if CommandLine.arguments.contains("--voice-actions-self-test") {
     exit(VoiceActionsSelfTest.run() ? EXIT_SUCCESS : EXIT_FAILURE)
 }

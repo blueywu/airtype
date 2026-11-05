@@ -16,12 +16,7 @@ enum PermissionKind: String, Identifiable, CaseIterable {
 
     var title: String {
         switch self {
-        case .doubaoInput where VoiceInputMethod.current.usesHelperProcesses:
-            L10n.text("\(VoiceInputMethod.current.shortName) 麦克风设置", "\(VoiceInputMethod.current.shortName) microphone")
-        case .doubaoInput:
-            VoiceInputMethod.current == .wetype
-                ? L10n.text("微信输入法麦克风设置", "WeType Microphone Setup")
-                : L10n.text("豆包麦克风设置", "Doubao Microphone Setup")
+        case .doubaoInput: L10n.text("选择 AirType 麦克风", "Choose the AirType microphone")
         case .microphone: L10n.text("麦克风权限", "Microphone Permission")
         case .accessibility: L10n.text("辅助功能权限", "Accessibility Permission")
         case .inputMonitoring: L10n.text("输入监控权限", "Input Monitoring Permission")
@@ -45,18 +40,7 @@ enum PermissionKind: String, Identifiable, CaseIterable {
 
     var screenshotNames: [String] {
         switch self {
-        case .doubaoInput where VoiceInputMethod.current.usesHelperProcesses:
-            []
-        case .doubaoInput where VoiceInputMethod.current == .wetype:
-            // No bundled screenshots yet; the guide shows its placeholder.
-            ["wetype-input0", "wetype-input1"]
-        case .doubaoInput:
-            [
-                "permission-app-management",
-                "doubaoinput0",
-                "doubaoinput1",
-                "doubaoinput2"
-            ]
+        case .doubaoInput: []
         case .microphone: ["permission-microphone", "permission-microphone"]
         case .accessibility: ["permission-accessibility", "permission-accessibility"]
         case .inputMonitoring: ["permission-input-monitoring", "permission-input-monitoring"]
@@ -66,38 +50,8 @@ enum PermissionKind: String, Identifiable, CaseIterable {
 
     var guidance: [String] {
         switch self {
-        case .doubaoInput where VoiceInputMethod.current.usesHelperProcesses:
-            return [L10n.text("在语音软件中选择 vRemoteDr 2ch 作为麦克风，并录制与软件设置相同的快捷键。", "Choose vRemoteDr 2ch in your voice app and record its matching shortcut.")]
-        case .doubaoInput where VoiceInputMethod.current == .wetype:
-            return [
-                L10n.text(
-                    "微信输入法使用系统输入设备。点击下方按钮，vRemoter 会把系统输入切换为 vRemoteDr 2ch，并打开“声音 → 输入”供你确认。",
-                    "WeType records from the system input. The button below switches the system input to vRemoteDr 2ch and opens Sound > Input so you can confirm."
-                ),
-                L10n.text(
-                    "如果在微信输入法的语音设置里单独选过麦克风，请改回“跟随系统”或选择 vRemoteDr 2ch。",
-                    "If WeType's voice settings pin a specific microphone, switch it back to Follow System or choose vRemoteDr 2ch."
-                )
-            ]
         case .doubaoInput:
-            return [
-                L10n.text(
-                    "首次直接打开豆包设置时，macOS 可能询问“App 管理”；请允许 vRemote 启动豆包输入法的设置组件。",
-                    "The first direct launch may ask for App Management. Allow vRemote to open Doubao's settings component."
-                ),
-                L10n.text(
-                    "打开菜单栏输入法菜单，点击“豆包输入法设置”。",
-                    "Open the input menu in the menu bar and choose Doubao Input Method Settings."
-                ),
-                L10n.text(
-                    "进入“语音输入”，找到“麦克风选择”，点击当前选项。",
-                    "Open Voice Input, locate Microphone Selection, and click the current option."
-                ),
-                L10n.text(
-                    "选择“自动检测”或“vRemoteDr 2ch”。如果自动检测没有声音，请直接选择 vRemoteDr 2ch。",
-                    "Choose Automatic Detection or vRemoteDr 2ch. If automatic detection is silent, select vRemoteDr 2ch directly."
-                )
-            ]
+            return [L10n.text("在录音应用中，将麦克风设为 vRemoteDr 2ch。若应用跟随系统输入，请在系统「声音 → 输入」中选择该设备。选择设备本身不会开麦，应用开始使用它后才会触发。", "Select vRemoteDr 2ch in your recording app, or in Sound > Input if the app follows the system input. Selecting the device alone does not activate the remote; an app must start using it.")]
         case .microphone:
             return [
                 L10n.text(
@@ -233,6 +187,7 @@ private enum ConsolePage: String, CaseIterable, Identifiable {
     case mixer
     case mapping
     case services
+    case microphone
     case usage
 
     var id: String { rawValue }
@@ -241,7 +196,8 @@ private enum ConsolePage: String, CaseIterable, Identifiable {
         switch self {
         case .mixer: L10n.text("音频", "Audio")
         case .mapping: L10n.text("按键", "Keys")
-        case .services: L10n.text("输入服务", "Services")
+        case .services: L10n.text("快捷键", "Shortcuts")
+        case .microphone: "麦克风"
         case .usage: L10n.text("本地记录", "Usage")
         }
     }
@@ -251,6 +207,7 @@ private enum ConsolePage: String, CaseIterable, Identifiable {
         case .mixer: "slider.horizontal.3"
         case .mapping: "keyboard"
         case .services: "waveform"
+        case .microphone: "mic"
         case .usage: "clock"
         }
     }
@@ -260,7 +217,7 @@ private enum ConsolePage: String, CaseIterable, Identifiable {
 private final class ConsoleViewModel: ObservableObject {
     @Published var selectedPage: ConsolePage = CommandLine.arguments.contains(
         "--mapping-window-demo"
-    ) ? .mapping : .mixer
+    ) ? .mapping : .microphone
     @Published var status = "启动中"
     @Published var hidConnected = false
     @Published var bleConnected = false
@@ -361,35 +318,13 @@ private final class ConsoleViewModel: ObservableObject {
 
     func openSettings(for kind: PermissionKind) {
         if kind == .doubaoInput {
-            if voiceInputMethod.followsSystemDefaultInput {
-                SystemInputRoute.routeToVRemote()
-                openSoundInputSettings()
-            } else if voiceInputMethod.usesHelperProcesses {
-                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: voiceInputMethod.bundleIdentifier) { NSWorkspace.shared.open(url) }
-            } else {
-                openDoubaoSettings()
-            }
+            openSoundInputSettings()
             activeModal = nil
             return
         }
         guard let url = kind.settingsURL else { return }
         NSWorkspace.shared.open(url)
         activeModal = nil
-    }
-
-    private func openDoubaoSettings() {
-        let bundleIdentifier = "com.bytedance.inputmethod.doubaoime.settings"
-        let candidates = [
-            NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier),
-            URL(
-                fileURLWithPath:
-                    "/Library/Input Methods/DoubaoIme.app/Contents/DoubaoImeSettings.app"
-            )
-        ]
-        for candidate in candidates.compactMap({ $0 })
-            where FileManager.default.fileExists(atPath: candidate.path) {
-            if NSWorkspace.shared.open(candidate) { return }
-        }
     }
 
     func openSoundInputSettings() {
@@ -588,6 +523,7 @@ private struct StudioMixerView: View {
                     switch model.selectedPage {
                     case .mapping: KeyMappingView(model: model)
                     case .services: VoiceServicesView(model: model)
+                    case .microphone: MicrophoneFollowView()
                     case .usage: LocalUsageView()
                     case .mixer: EmptyView()
                     }
@@ -632,20 +568,20 @@ private struct StudioMixerView: View {
                     .foregroundStyle(ConsoleTheme.secondary)
             }
             ConsolePageSelector(selection: $model.selectedPage)
-                .frame(width: 320)
+                .frame(width: 390)
             Spacer()
             HStack(spacing: 7) {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 9, height: 9)
                 Text(model.remoteStreaming
-                    ? L10n.text("录音中", "Recording")
+                    ? L10n.text("麦克风开启", "Microphone on")
                     : statusText)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(statusColor)
             }
             if model.remoteStreaming {
-                Button(L10n.text("结束录音", "Stop")) { model.onStopMicrophone?() }
+                Button(L10n.text("暂停开麦", "Pause microphone")) { model.onStopMicrophone?() }
                     .buttonStyle(ConsoleButtonStyle(
                         tone: ConsoleButtonTone.error,
                         compact: true,
@@ -713,8 +649,8 @@ private struct StudioMixerView: View {
         VStack(spacing: 0) {
             StatusRow(
                 title: L10n.text(
-                    "\(model.voiceInputMethod.shortName)输入设备",
-                    "\(model.voiceInputMethod.shortName) input"
+                    "AirType 输入设备",
+                    "AirType input"
                 ),
                 value: model.doubaoIsRecording
                     ? (model.doubaoUsesVRemote
@@ -827,6 +763,68 @@ private struct ConsolePageSelector: View {
     }
 }
 
+private struct MicrophoneFollowView: View {
+    @ObservedObject private var settings = MicrophoneFollowSettings.shared
+    @ObservedObject private var controller = MicrophoneFollowController.shared
+    var body: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            Text("麦克风启用方式").font(.system(size: 21, weight: .semibold))
+            Text("先在录音应用或系统声音设置中，将输入设备选为 vRemoteDr 2ch（AirType 麦克风）。")
+                .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+            Picker("启用方式", selection: $settings.specified) {
+                Text("自动跟随").tag(false)
+                Text("指定应用").tag(true)
+            }.pickerStyle(.segmented)
+            Text(settings.specified
+                ? "所选应用开始使用 AirType 麦克风时，遥控器自动开麦；这些应用全部停止使用后关麦。"
+                : "任何应用开始使用 AirType 麦克风时，遥控器自动开麦；所有应用停止使用后关麦。")
+                .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+            if settings.specified {
+                HStack {
+                    Text("允许触发开麦的应用").font(.headline)
+                    Spacer()
+                    Button("添加应用…") { settings.chooseApplications() }
+                    Button("系统应用…") { settings.chooseApplications(system: true) }
+                }
+                Text("可多选。本机任意位置的 .app 均可选择，包括系统应用；在选择窗口按 ⇧⌘G 可前往其他文件夹。无需配置快捷键。")
+                    .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+                ScrollView {
+                    VStack(spacing: 8) {
+                        if settings.applications.isEmpty { Text("尚未添加应用，此模式下不会自动开麦。").padding() }
+                        ForEach(settings.applications) { application in
+                            HStack {
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: application.path)).resizable().frame(width: 28, height: 28)
+                                VStack(alignment: .leading) {
+                                    Text(application.name)
+                                    Text(application.path).font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary).lineLimit(1).help(application.path)
+                                }
+                                Spacer()
+                                Button("移除") { settings.remove(application.id) }
+                            }.padding(9).background(ConsoleTheme.surface).cornerRadius(9)
+                        }
+                    }
+                }
+            } else { Spacer() }
+            if let error = settings.error { Text(error).foregroundStyle(.orange) }
+            HStack {
+                Button(controller.paused ? "恢复自动跟随" : "暂停遥控器麦克风") {
+                    if controller.paused { controller.resume() } else { controller.pause() }
+                }
+                Spacer()
+            }
+            Label(controller.message, systemImage: controller.eligible.isEmpty ? "mic.slash" : "mic.fill")
+                .font(.system(size: 12)).foregroundStyle(ConsoleTheme.green)
+            Text("鼠标、键盘和遥控器都可以操作录音。按键映射在「按键」中单独配置。麦克风预览也可能触发开麦；暂停录音后应用仍占用麦克风时，会继续保持开启。")
+                .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+            if settings.specified {
+                Text("此名单控制开麦时机，不隔离音频：开麦期间，其他有权限的应用仍可能读取相同设备。")
+                    .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+            }
+        }.padding(16).background(ConsoleTheme.surface).cornerRadius(15)
+
+    }
+}
+
 private struct VoiceServicesView: View {
     @ObservedObject var model: ConsoleViewModel
     @ObservedObject private var services = VoiceServiceStore.shared
@@ -836,8 +834,8 @@ private struct VoiceServicesView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("输入服务").font(.system(size: 20, weight: .semibold))
-                    Text("勾选要使用的服务，再到「按键」绑定不同按钮。")
+                    Text("应用快捷键").font(.system(size: 20, weight: .semibold))
+                    Text("这里配置按钮要发送的快捷键；允许开麦的应用在「麦克风」中选择。")
                         .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
                 }
                 Spacer()
@@ -858,7 +856,7 @@ private struct VoiceServicesView: View {
             }
             VStack(alignment: .leading, spacing: 7) {
                 Text("快捷键需与对应应用中的设置一致；左右 Command 等按键会分别识别。")
-                Text("同时启用多个服务时，每次只运行一项听写；切换前先确认上一项停止。")
+                Text("多个应用可以同时使用麦克风；这些快捷键各自控制对应应用。")
                 Text("Codex 听写仅在 Codex 位于前台时启动。这些设置不会切换系统输入法。")
             }.font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
                 .padding(15).frame(maxWidth: .infinity, alignment: .leading)
@@ -923,7 +921,7 @@ private struct LocalUsageView: View {
                 Spacer()
                 Toggle("记录使用情况", isOn: Binding(get: { usage.enabled }, set: usage.setEnabled)).toggleStyle(.switch)
             }
-            Text("仅保存时间、听写时长、输入服务、触发来源，以及开始听写时所在应用。\n不保存录音、识别文字、窗口标题或网址；数据不上传。")
+            Text("仅保存麦克风使用时间、时长、实际使用应用与结束状态。\n不保存录音、识别文字、窗口标题或网址；数据不上传。")
                 .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)
                 .background(panelBackground(ConsoleTheme.surface, radius: 14))
@@ -953,7 +951,7 @@ private struct LocalUsageView: View {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text((VoiceInputMethod(rawValue: record.service)?.title ?? record.service) + " · " + record.application.name)
                                         .font(.system(size: 13, weight: .medium))
-                                    Text(record.attemptedAt.formatted(date: .abbreviated, time: .shortened) + " · " + (record.source == "remote" ? "遥控器" : "键盘") + " · " + actionTitle(record.action))
+                                    Text(record.attemptedAt.formatted(date: .abbreviated, time: .shortened) + " · " + (record.source == "application" ? "应用使用麦克风" : (record.source == "remote" ? "遥控器" : "键盘")) + " · " + actionTitle(record.action))
                                         .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
                                 }
                                 Spacer()
@@ -968,7 +966,7 @@ private struct LocalUsageView: View {
             }
             if let error = usage.error { Text(error).font(.system(size: 11)).foregroundStyle(.orange) }
             if let exportMessage { Text(exportMessage).font(.system(size: 11)) }
-            Text("归因以开始听写时的前台应用为准；时长包含停顿，不代表实际说话时长。")
+            Text("新记录按实际使用麦克风的应用统计；包含预览和停顿，不代表文件录音或说话时长。")
                 .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
         }
         .confirmationDialog("清空所有本地使用记录？", isPresented: $confirmClear) {
@@ -976,6 +974,7 @@ private struct LocalUsageView: View {
         }
     }
     private func actionTitle(_ action: String) -> String {
+        if action == "inputDevice" { return "AirType 输入设备" }
         let parts = action.split(separator: ".", maxSplits: 1).map(String.init)
         guard parts.count == 2, let remote = SupportedRemoteID(rawValue: parts[0]),
               let button = RemoteProfiles.buttons(for: remote).first(where: { $0.id == parts[1] }) else { return "快捷键" }
@@ -986,7 +985,7 @@ private struct LocalUsageView: View {
         case "completed": "已完成"
         case "switched": "已切换服务"
         case "startFailed": "未确认启动"
-        case "recording": "听写中"
+        case "recording": "使用中"
         case "starting": "正在启动"
         case "interrupted": "已中断"
         case "serviceDisabled": "服务已停用"
@@ -1005,12 +1004,12 @@ private struct KeyMappingView: View {
         VStack(spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("一个按钮，一项输入服务").font(.system(size: 16, weight: .semibold))
+                    Text("选择按钮要执行的动作").font(.system(size: 16, weight: .semibold))
                     Text("只列出已启用的服务；也可选择常用动作或录制自定义按键。")
                         .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
                 }
                 Spacer()
-                Button("管理输入服务") { model.selectedPage = .services }
+                Button("应用快捷键") { model.selectedPage = .services }
             }.padding(14).background(panelBackground(ConsoleTheme.surface, radius: 14))
             if !model.voiceActionStatus.isEmpty {
                 Text(model.voiceActionStatus).font(.system(size: 11)).foregroundStyle(ConsoleTheme.green)
@@ -1590,8 +1589,8 @@ private struct OutputChannelView: View {
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(ConsoleTheme.text)
             Text(L10n.text(
-                "发送给\(model.voiceInputMethod.shortName)",
-                "Sent to \(model.voiceInputMethod.shortName)"
+                "发送到 AirType 麦克风",
+                "Sent to AirType microphone"
             ))
                 .font(.system(size: 13))
                 .foregroundStyle(ConsoleTheme.secondary)
@@ -1656,8 +1655,8 @@ private struct OutputChannelView: View {
                 : idleReleased
                     ? L10n.text("开始听写后开启音频通道", "Audio opens when dictation starts")
                     : L10n.text(
-                    "\(model.voiceInputMethod.shortName)正在接收",
-                    "\(model.voiceInputMethod.shortName) is receiving"
+                    "应用正在使用麦克风",
+                    "Applications are using the microphone"
                 ))
                 .font(.system(size: 11))
                 .foregroundStyle(outputError ? ConsoleTheme.red : ConsoleTheme.secondary)
@@ -2052,6 +2051,15 @@ enum P1UIReview {
         let scene = CommandLine.arguments.first { $0.hasPrefix("--scene=") }?.replacingOccurrences(of: "--scene=", with: "") ?? "services"
         AirTypeEnvironment.defaults = UserDefaults(suiteName: "AirType.UIReview.\(ProcessInfo.processInfo.processIdentifier)")!
         AirTypeEnvironment.usageFile = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("AirType-UIReview-\(ProcessInfo.processInfo.processIdentifier)/sessions.json")
+        if scene.hasPrefix("microphone") {
+            let settings = MicrophoneFollowSettings.shared
+            settings.specified = !["microphone-auto", "microphone-paused"].contains(scene)
+            if scene == "microphone-paused" { MicrophoneFollowController.shared.pause() }
+            if scene == "microphone-apps" {
+                settings.add(url: URL(fileURLWithPath: "/System/Applications/VoiceMemos.app"))
+                settings.add(url: URL(fileURLWithPath: "/System/Applications/QuickTime Player.app"))
+            }
+        }
         let services = VoiceServiceStore.shared
         let mappings = RemoteMappingStore.shared
         if ["enabled", "mapping", "disabled", "usage", "guard", "switch-failed"].contains(scene) {
@@ -2068,6 +2076,7 @@ enum P1UIReview {
         }
         let model = ConsoleViewModel()
         model.selectedPage = ["mapping", "disabled"].contains(scene) ? .mapping : (scene == "usage" || scene == "usage-off" ? .usage : .services)
+        if scene.hasPrefix("microphone") { model.selectedPage = .microphone }
         model.status = "测试场景"; model.chromecastConnected = true
         model.hidConnected = true; model.bleConnected = true; model.driverAvailable = true
         model.microphoneGranted = true; model.accessibilityGranted = true
@@ -2078,10 +2087,10 @@ enum P1UIReview {
         if scene == "switch-failed" { model.voiceActionStatus = "上一项听写未确认停止；已取消切换。" }
         if scene == "usage" {
             let usage = LocalUsageStore.shared; usage.setEnabled(true)
-            let id = usage.begin(service: .typeless, source: "remote", action: "chromecast.voice", application: .init(bundleID: "com.apple.Notes", name: "备忘录"))
+            let id = usage.begin(serviceName: "麦克风使用", source: "application", action: "inputDevice", application: .init(bundleID: "com.apple.VoiceMemos", name: "语音备忘录"))
             usage.confirm(id); usage.finish(id, outcome: "completed")
-            let id2 = usage.begin(service: .codex, source: "remote", action: "chromecast.0F", application: .init(bundleID: "com.openai.codex", name: "Codex"))
-            usage.finish(id2, outcome: "startFailed")
+            let id2 = usage.begin(serviceName: "麦克风使用", source: "application", action: "inputDevice", application: .init(bundleID: "com.openai.codex", name: "Codex"))
+            usage.confirm(id2); usage.finish(id2, outcome: "completed")
         }
         app.setActivationPolicy(.regular)
         let view = StudioMixerView(model: model)
@@ -2090,13 +2099,16 @@ enum P1UIReview {
         window.title = "AirType · P1 界面测试"
         window.contentView = NSHostingView(rootView: view)
         window.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true)
+        if CommandLine.arguments.contains("--review-app-picker") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { MicrophoneFollowSettings.shared.chooseApplications(system: true) }
+        }
         FileHandle.standardError.write(Data("[P1-UI] ready scene=\(scene) window=\(window.windowNumber)\n".utf8))
         if let path = CommandLine.arguments.first(where: { $0.hasPrefix("--review-output=") })?.replacingOccurrences(of: "--review-output=", with: "") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                 let capture = Process(); capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                capture.arguments = ["-x", "-o", "-l", String((window.attachedSheet ?? window).windowNumber), path]
+                capture.arguments = ["-x", "-o", "-l", String((NSApp.windows.first { $0 is NSOpenPanel && $0.isVisible } ?? NSApp.keyWindow ?? window.attachedSheet ?? window).windowNumber), path]
                 do { try capture.run(); capture.waitUntilExit() } catch { print(error) }
-                if !FileManager.default.fileExists(atPath: path), let view = (window.attachedSheet ?? window).contentView,
+                if !FileManager.default.fileExists(atPath: path), let view = (NSApp.windows.first { $0 is NSOpenPanel && $0.isVisible } ?? NSApp.keyWindow ?? window.attachedSheet ?? window).contentView,
                    let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: rep)
                     try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))

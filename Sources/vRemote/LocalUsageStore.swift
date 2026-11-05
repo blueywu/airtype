@@ -63,9 +63,12 @@ final class LocalUsageStore: ObservableObject {
         enabled = value; defaults.set(value, forKey: key)
     }
     func begin(service: VoiceInputMethod, source: String, action: String, application: UsageApplication) -> UUID? {
+        begin(serviceName: service.rawValue, source: source, action: action, application: application)
+    }
+    func begin(serviceName: String, source: String, action: String, application: UsageApplication) -> UUID? {
         guard enabled, error == nil else { return nil }
         let id = UUID()
-        records.append(Record(id: id, attemptedAt: now(), service: service.rawValue,
+        records.append(Record(id: id, attemptedAt: now(), service: serviceName,
                               source: source, action: action, application: application, outcome: "starting"))
         persist(); return id
     }
