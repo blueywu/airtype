@@ -17,7 +17,7 @@ for localization in "$SCRIPT_DIR/Packaging"/*.lproj; do
   [[ -d "$localization" ]] || continue
   ditto "$localization" "$CONTENTS/Resources/${localization:t}"
 done
-cp "$SCRIPT_DIR/Design/vRemoter-Logo-v1/vRemoter-app-icon-v9.png" \
+cp "$SCRIPT_DIR/Design/AirType-AppIcon/AirType-icon.png" \
   "$CONTENTS/Resources/vRemoterLogo.png"
 
 ICONSET="$SCRIPT_DIR/dist/vRemoter.iconset"

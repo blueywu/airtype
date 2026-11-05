@@ -31,7 +31,7 @@
     <key>NSBluetoothPeripheralUsageDescription</key>
     <string>连接蓝牙语音遥控器并接收语音音频。</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>同时使用蓝牙遥控器和 MacBook 麦克风进行语音输入。</string>
+    <string>仅在你启用其他麦克风时，采集所选设备的声音并提供给录音或听写应用。</string>
     <key>NSInputMonitoringUsageDescription</key>
     <string>识别蓝牙遥控器语音键并阻止原生搜索动作干扰语音输入。</string>
     <key>NSHighResolutionCapable</key>

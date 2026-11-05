@@ -135,6 +135,13 @@ final class MicrophoneFollowController: ObservableObject {
     private var wanted = false
     private var pendingStop: Date?
     private var usageIDs: [String: UUID] = [:]
+    enum DisplayTone { case idle, active, warning, error }
+    var displayTone: DisplayTone {
+        if paused { return .idle }
+        if actions.sourceFailed || passivePreparationFailed { return .error }
+        if !actions.status.isEmpty || (remoteEnabled() && wanted && preferredRemote?() == nil) || attempts >= 3 { return .warning }
+        return wanted ? .active : .idle
+    }
     @Published var paused = false
     @Published private(set) var voiceActionBusy = false
     let actions = VoiceMicrophoneAction()

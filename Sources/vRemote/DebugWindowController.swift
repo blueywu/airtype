@@ -59,7 +59,7 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                     "System Settings will open Privacy & Security > Microphone."
                 ),
                 L10n.text(
-                    "找到 vRemote（或 vRemoter），打开右侧开关；若已经打开，关闭后重新打开一次。",
+                    "找到 AirType（旧版本可能显示 vRemote 或 vRemoter），打开右侧开关；若已经打开，关闭后重新打开一次。",
                     "Find vRemote or vRemoter and enable it. If already enabled, turn it off and on once."
                 )
             ]
@@ -70,7 +70,7 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                     "System Settings will open Privacy & Security > Accessibility."
                 ),
                 L10n.text(
-                    "找到 vRemote（或 vRemoter）并打开开关。列表中没有时，点加号选择应用。",
+                    "找到 AirType（旧版本可能显示 vRemote 或 vRemoter）并打开开关。列表中没有时，点加号选择应用。",
                     "Enable vRemote or vRemoter. If it is missing, use the plus button to add the app."
                 )
             ]
@@ -81,7 +81,7 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                     "System Settings will open Privacy & Security > Input Monitoring."
                 ),
                 L10n.text(
-                    "找到 vRemote（或 vRemoter）并打开开关。macOS 提示重新启动时允许它重新打开。",
+                    "找到 AirType（旧版本可能显示 vRemote 或 vRemoter）并打开开关。macOS 提示重新启动时允许它重新打开。",
                     "Enable vRemote or vRemoter, then allow macOS to relaunch it when prompted."
                 )
             ]
@@ -92,7 +92,7 @@ enum PermissionKind: String, Identifiable, CaseIterable {
                     "System Settings will open Privacy & Security > Bluetooth."
                 ),
                 L10n.text(
-                    "找到 vRemote（或 vRemoter）并打开开关，然后返回应用等待遥控器重新连接。",
+                    "找到 AirType（旧版本可能显示 vRemote 或 vRemoter）并打开开关，然后返回应用等待遥控器重新连接。",
                     "Enable vRemote or vRemoter, then return to the app and wait for the remote to reconnect."
                 )
             ]
@@ -115,7 +115,7 @@ private enum ConsoleTheme {
     static let lineSoft = Color(red: 0.15, green: 0.16, blue: 0.18)
     static let text = Color(red: 0.93, green: 0.94, blue: 0.95)
     static let secondary = Color(red: 0.55, green: 0.57, blue: 0.61)
-    static let tertiary = Color(red: 0.39, green: 0.41, blue: 0.45)
+    static let tertiary = Color(red: 0.50, green: 0.53, blue: 0.57)
     static let green = Color(red: 0.31, green: 0.82, blue: 0.53)
     static let amber = Color(red: 0.96, green: 0.61, blue: 0.19)
     static let amberDeep = Color(red: 0.16, green: 0.13, blue: 0.09)
@@ -129,7 +129,7 @@ enum LogoAsset {
         let candidates: [URL?] = [
             Bundle.main.url(forResource: "vRemoterLogo", withExtension: "png"),
             URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-                .appendingPathComponent("Design/vRemoter-Logo-v1/vRemoter-app-icon-v9.png")
+                .appendingPathComponent("Design/AirType-AppIcon/AirType-icon.png")
         ]
         for candidate in candidates.compactMap({ $0 }) {
             if let image = NSImage(contentsOf: candidate) { return image }
@@ -194,11 +194,11 @@ private enum ConsolePage: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .mixer: L10n.text("音频", "Audio")
+        case .mixer: L10n.text("音源", "Sources")
         case .mapping: L10n.text("按键", "Keys")
-        case .services: L10n.text("语音动作", "Shortcuts")
-        case .microphone: "麦克风"
-        case .usage: L10n.text("本地记录", "Usage")
+        case .services: L10n.text("语音动作", "Voice actions")
+        case .microphone: "开麦方式"
+        case .usage: L10n.text("使用记录", "Usage")
         }
     }
 
@@ -348,7 +348,7 @@ private final class ConsoleViewModel: ObservableObject {
 }
 
 final class DebugWindowController: NSWindowController, NSWindowDelegate {
-    private static let windowSize = NSSize(width: 775, height: 700)
+    private static let windowSize = NSSize(width: 820, height: 760)
 
     var onStopMicrophone: (() -> Void)?
     var onRestartApp: (() -> Void)?
@@ -490,14 +490,16 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
 
 private struct StudioMixerView: View {
     @ObservedObject var model: ConsoleViewModel
+    @ObservedObject private var sources = AudioSourceSettings.shared
+    @ObservedObject private var follow = MicrophoneFollowController.shared
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-                .frame(height: 68)
+            header.frame(height: 52)
+            ConsolePageSelector(selection: $model.selectedPage).padding(.top, 16)
             if model.selectedPage == .mixer {
                 Spacer().frame(height: 15)
-                AudioSourcesView(model: model).frame(height: 535)
+                AudioSourcesView(model: model).frame(height: 570)
             } else {
                 Spacer().frame(height: 15)
                 Group {
@@ -508,7 +510,7 @@ private struct StudioMixerView: View {
                     case .usage: LocalUsageView()
                     case .mixer: EmptyView()
                     }
-                }.frame(height: 535)
+                }.frame(height: 570)
             }
             #if DEBUG
             if CommandLine.arguments.contains("--p1-ui-review") {
@@ -517,11 +519,15 @@ private struct StudioMixerView: View {
             }
             #endif
         }
-        .padding(20)
-        .frame(width: 775, height: 700)
+        .padding(.horizontal, 24)
+        .padding(.top, 30)
+        .padding(.bottom, 16)
+        .frame(width: 820, height: 760)
         .background(ConsoleTheme.panel)
         .preferredColorScheme(.dark)
         .tint(ConsoleTheme.green)
+        .font(.system(size: 13))
+        .controlSize(.regular)
         .sheet(item: $model.activeModal) { modal in
             switch modal {
             case .permission(let kind):
@@ -540,30 +546,31 @@ private struct StudioMixerView: View {
             Image(nsImage: WaveformIcon.image)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 45, height: 45)
+                .frame(width: 32, height: 32)
             VStack(alignment: .leading, spacing: 1) {
                 Text("AirType")
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(ConsoleTheme.text)
                 Text(L10n.text("遥控语音输入", "Remote voice input"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ConsoleTheme.secondary)
             }
-            ConsolePageSelector(selection: $model.selectedPage)
-                .frame(width: 390)
             Spacer()
             HStack(spacing: 7) {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 9, height: 9)
-                Text(model.remoteStreaming
-                    ? L10n.text("麦克风开启", "Microphone on")
-                    : statusText)
-                    .font(.system(size: 14, weight: .semibold))
+                Text(statusText)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(statusColor)
             }
-            if model.remoteStreaming {
-                Button(L10n.text("暂停开麦", "Pause microphone")) { model.onStopMicrophone?() }
+            if !model.driverAvailable || (sources.remoteEnabled && !model.bluetoothGranted) || !model.accessibilityGranted || !model.inputMonitoringGranted || (sources.otherEnabled && !model.microphoneGranted) {
+                Button("检查设置") { model.selectedPage = .mixer }
+            }
+            if model.remoteStreaming || !follow.eligible.isEmpty || follow.paused {
+                Button(follow.paused ? "恢复输入" : "暂停输入") {
+                    if follow.paused { follow.resume() } else { follow.pause() }
+                }
                     .buttonStyle(ConsoleButtonStyle(
                         tone: ConsoleButtonTone.error,
                         compact: true,
@@ -571,28 +578,29 @@ private struct StudioMixerView: View {
                     ))
             }
         }
-        .padding(.horizontal, 20)
-        .background(panelBackground(ConsoleTheme.surface, radius: 19))
+        .padding(.horizontal, 0)
     }
 
     private var statusText: String {
-        if !model.microphoneGranted || !model.accessibilityGranted || !model.inputMonitoringGranted {
-            return L10n.text("需要处理", "Action needed")
-        }
-        if model.hidConnected && model.bleConnected {
-            return L10n.text("正在运行", "Running")
-        }
-        return L10n.text("正在连接", "Connecting")
+        if follow.paused { return "输入已暂停" }
+        if follow.actions.sourceFailed { return "音源中断 · 已停止送音" }
+        if !sources.remoteEnabled && !sources.otherEnabled { return "尚未选择音源" }
+        if !model.driverAvailable { return "音频驱动不可用" }
+        if sources.otherEnabled && !model.microphoneGranted { return "其他麦克风待授权" }
+        if sources.remoteEnabled && !model.bluetoothGranted { return "蓝牙待授权" }
+        if !model.accessibilityGranted || !model.inputMonitoringGranted { return "按键控制待授权" }
+        if model.remoteStreaming || !follow.eligible.isEmpty { return "麦克风使用中" }
+        if sources.remoteEnabled && !model.bleConnected { return "等待遥控器连接" }
+        return "已就绪 · 等待应用使用"
     }
 
     private var statusColor: Color {
-        if model.remoteStreaming { return ConsoleTheme.amber }
-        if !model.microphoneGranted || !model.accessibilityGranted || !model.inputMonitoringGranted {
-            return ConsoleTheme.red
-        }
-        return model.hidConnected && model.bleConnected
-            ? ConsoleTheme.green
-            : ConsoleTheme.amber
+        if follow.paused { return ConsoleTheme.secondary }
+        if follow.actions.sourceFailed { return ConsoleTheme.red }
+        if !sources.remoteEnabled && !sources.otherEnabled { return ConsoleTheme.amber }
+        if !model.driverAvailable || (sources.otherEnabled && !model.microphoneGranted) { return ConsoleTheme.red }
+        if (sources.remoteEnabled && (!model.bluetoothGranted || !model.bleConnected)) || !model.accessibilityGranted || !model.inputMonitoringGranted { return ConsoleTheme.amber }
+        return model.remoteStreaming || !follow.eligible.isEmpty ? ConsoleTheme.green : ConsoleTheme.secondary
     }
 
     private var mixer: some View {
@@ -718,16 +726,16 @@ private struct ConsolePageSelector: View {
                     selection = page
                 } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: page.symbol)
-                        Text(page.title)
+                        Image(systemName: page.symbol).frame(width: 18, height: 18)
+                        Text(page.title).lineLimit(1)
                     }
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(
                         selection == page
                             ? ConsoleTheme.text
                             : ConsoleTheme.secondary
                     )
-                    .frame(maxWidth: .infinity, minHeight: 30)
+                    .frame(maxWidth: .infinity, minHeight: 38)
                     .background(
                         selection == page
                             ? ConsoleTheme.surface2
@@ -737,6 +745,7 @@ private struct ConsolePageSelector: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(page.title)
+                .accessibilityAddTraits(selection == page ? .isSelected : [])
             }
         }
         .padding(3)
@@ -750,10 +759,11 @@ private struct AudioSourcesView: View {
     @ObservedObject private var sources = AudioSourceSettings.shared
     @ObservedObject private var controller = MicrophoneFollowController.shared
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("选择提供给应用的声音").font(.system(size: 20, weight: .semibold))
+        ScrollView { VStack(alignment: .leading, spacing: 16) {
+            Text("音源").font(.system(size: 20, weight: .semibold))
             Text("默认只使用遥控器。勾选其他麦克风后，两路声音会混合送到 AirType 输入设备。")
                 .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+            DeviceChecksView(model: model)
             VStack(alignment: .leading, spacing: 18) {
                 Toggle("遥控器麦克风", isOn: Binding(get: { sources.remoteEnabled }, set: {
                     sources.remoteEnabled = $0; model.onRemoteInputEnabledChanged?($0)
@@ -769,7 +779,7 @@ private struct AudioSourcesView: View {
                         if !sources.otherUID.isEmpty && !sources.devices.contains(where: { $0.id == sources.otherUID }) {
                             Text("所选设备未连接").tag(sources.otherUID)
                         }
-                    }.disabled(!sources.otherEnabled)
+                    }.tint(ConsoleTheme.text).disabled(!sources.otherEnabled)
                     Button("刷新设备") { sources.refresh() }
                 }
                 Text("“开始前的系统输入”会记住具体麦克风，不随 AirType 的临时切换变化。若系统已选 AirType，请在这里指定其他麦克风。")
@@ -780,7 +790,7 @@ private struct AudioSourcesView: View {
             Text(controller.voiceActionBusy ? "语音动作进行中；结束后可修改音源。" : "设置音源不会立即录音。语音动作会先检查音源可用，再启动听写。")
                 .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
             if !controller.message.isEmpty { Text(controller.message).font(.system(size: 12)) }
-            Spacer(minLength: 0)
+            Divider().overlay(ConsoleTheme.lineSoft)
             Text("不改变扬声器或耳机的播放选择。使用耳机麦克风时，设备自身的通话模式仍可能影响播放音质。")
                 .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
             Toggle("兼容模式：保持音频通道开启", isOn: Binding(
@@ -788,10 +798,44 @@ private struct AudioSourcesView: View {
             )).font(.system(size: 12))
             Text("通常保持关闭。仅在按需模式不稳定时开启；它不决定使用哪个麦克风。")
                 .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
-            Button("麦克风权限设置…") { model.activeModal = .permission(.microphone) }
-                .font(.system(size: 11))
-        }.onAppear { sources.refresh() }
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 8) }
+        .onAppear { sources.refresh() }
         .onChange(of: sources.otherUID) { _ in controller.sourceConfigurationChanged() }
+    }
+}
+
+private struct DeviceChecksView: View {
+    @ObservedObject var model: ConsoleViewModel
+    @ObservedObject private var sources = AudioSourceSettings.shared
+    @State private var expanded = false
+    private var needsAttention: Bool {
+        !model.driverAvailable || !model.accessibilityGranted || !model.inputMonitoringGranted ||
+        (sources.remoteEnabled && !model.bluetoothGranted) || (sources.otherEnabled && !model.microphoneGranted)
+    }
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(spacing: 4) {
+                StatusRow(title: "音频驱动", value: model.driverAvailable ? "vRemoteDr 2ch 可用" : "未检测到虚拟麦克风", tone: model.driverAvailable ? .good : .error, action: "声音设置", onAction: model.openSoundInputSettings)
+                permission("蓝牙", granted: model.bluetoothGranted, required: sources.remoteEnabled, kind: .bluetooth, purpose: "遥控器连接")
+                permission("其他麦克风", granted: model.microphoneGranted, required: sources.otherEnabled, kind: .microphone, purpose: "采集其他麦克风")
+                permission("辅助功能", granted: model.accessibilityGranted, required: true, kind: .accessibility, purpose: "发送按键动作")
+                permission("输入监控", granted: model.inputMonitoringGranted, required: true, kind: .inputMonitoring, purpose: "监听遥控器按键")
+                Text("驱动缺失时，需要安装或修复 AirType 音频驱动；声音设置仅用于检查设备。权限修改后如未生效，请重新打开 AirType。")
+                    .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary).padding(.top, 8)
+            }.padding(.top, 10)
+        } label: {
+            HStack {
+                Label("设备与权限", systemImage: "checklist").font(.system(size: 14, weight: .medium))
+                Spacer()
+                Text(needsAttention ? "有项目需要检查" : "配置已就绪").font(.system(size: 12)).foregroundStyle(needsAttention ? ConsoleTheme.amber : ConsoleTheme.secondary)
+            }
+        }
+        .padding(16).background(panelBackground(ConsoleTheme.surface, radius: 12))
+        .onAppear { expanded = needsAttention }
+        .onChange(of: needsAttention) { value in if value { expanded = true } }
+    }
+    private func permission(_ title: String, granted: Bool, required: Bool, kind: PermissionKind, purpose: String) -> some View {
+        StatusRow(title: title, value: granted ? "已授权 · " + purpose : (required ? "未授权 · " + purpose : "当前未启用，无需授权"), tone: granted || !required ? .good : .warning, action: granted || !required ? nil : "去设置", onAction: { model.activeModal = .permission(kind) })
     }
 }
 
@@ -800,7 +844,7 @@ private struct MicrophoneFollowView: View {
     @ObservedObject private var controller = MicrophoneFollowController.shared
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Text("麦克风启用方式").font(.system(size: 21, weight: .semibold))
+            Text("开麦方式").font(.system(size: 20, weight: .semibold))
             Text("先在录音应用或系统声音设置中，将输入设备选为 vRemoteDr 2ch（AirType 麦克风）。")
                 .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
             Picker("启用方式", selection: $settings.specified) {
@@ -818,7 +862,7 @@ private struct MicrophoneFollowView: View {
                     Button("添加应用…") { settings.chooseApplications() }
                     Button("系统应用…") { settings.chooseApplications(system: true) }
                 }
-                Text("可多选。本机任意位置的 .app 均可选择，包括系统应用；在选择窗口按 ⇧⌘G 可前往其他文件夹。无需配置快捷键。")
+                Text("可添加多个应用，包括系统应用。无需配置快捷键。")
                     .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
                 ScrollView {
                     VStack(spacing: 8) {
@@ -845,14 +889,14 @@ private struct MicrophoneFollowView: View {
                 Spacer()
             }
             Label(controller.message, systemImage: controller.eligible.isEmpty ? "mic.slash" : "mic.fill")
-                .font(.system(size: 12)).foregroundStyle(ConsoleTheme.green)
+                .font(.system(size: 12)).foregroundStyle(controller.displayTone == .error ? ConsoleTheme.red : controller.displayTone == .warning ? ConsoleTheme.amber : controller.displayTone == .active ? ConsoleTheme.green : ConsoleTheme.secondary)
             Text("鼠标、键盘和遥控器都可以操作录音。应用的麦克风预览也算使用。暂停 AirType 只停止送音，不会替你结束应用录音；语音动作仍在录音时会保留 AirType 输入，避免切到其他麦克风。")
                 .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
             if settings.specified {
                 Text("此名单控制开麦时机，不隔离音频：开麦期间，其他有权限的应用仍可能读取相同设备。")
                     .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
             }
-        }.padding(16).background(ConsoleTheme.surface).cornerRadius(15)
+        }.frame(maxWidth: .infinity, alignment: .leading)
 
     }
 }
@@ -868,7 +912,7 @@ private struct VoiceServicesView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("语音动作").font(.system(size: 20, weight: .semibold))
-                    Text("先准备「音频」中选定的麦克风并切换系统输入，再发送应用快捷键。")
+                    Text("使用「音源」中选定的麦克风，准备就绪后启动应用听写。")
                         .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
                 }
                 Spacer()
@@ -926,16 +970,16 @@ private struct VoiceServicesView: View {
         let profile = services.profile(service)
         return HStack(spacing: 14) {
             Toggle(service.title, isOn: Binding(get: { services.profile(service).enabled }, set: { _ = services.setEnabled($0, for: service) }))
-                .toggleStyle(.checkbox).font(.system(size: 16, weight: .semibold)).frame(width: 175, alignment: .leading)
+                .toggleStyle(.checkbox).font(.system(size: 14, weight: .medium)).frame(width: 160, alignment: .leading)
             VStack(alignment: .leading, spacing: 6) {
-                Text(profile.shortcut?.label ?? "尚未配置快捷键").font(.system(size: 14, weight: .medium))
+                Text(profile.shortcut?.label ?? "尚未配置快捷键").font(.system(size: 13, weight: .medium)).lineLimit(2).help(profile.shortcut?.label ?? "请先录制快捷键")
                 Text(profile.shortcut == nil ? "请先录制，再勾选启用" : (profile.enabled ? "已启用 · 可用于按钮映射" : "已停用 · 保留已有配置"))
                     .font(.system(size: 11)).foregroundStyle(profile.enabled ? ConsoleTheme.green : ConsoleTheme.secondary)
             }
             Spacer()
             Button(profile.shortcut == nil ? "录制快捷键" : "重新录制") { recording = service }
                 .disabled(model.remoteStreaming || model.doubaoIsRecording)
-        }.padding(18).frame(minHeight: 96).background(panelBackground(ConsoleTheme.surface, radius: 16))
+        }.padding(16).frame(minHeight: 76).background(panelBackground(ConsoleTheme.surface, radius: 12))
     }
 }
 
@@ -948,7 +992,7 @@ private struct LocalUsageView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("本地使用记录").font(.system(size: 20, weight: .semibold))
-                    Text("从开启后开始记录；关闭后保留历史。图表将在后续版本加入。")
+                    Text("记录仅保存在这台 Mac；关闭后保留历史。")
                         .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
                 }
                 Spacer()
@@ -973,7 +1017,7 @@ private struct LocalUsageView: View {
             if usage.records.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "clock").font(.system(size: 28)).foregroundStyle(ConsoleTheme.secondary)
-                    Text(usage.enabled ? "完成一次听写后，会在这里显示记录。" : "本地记录尚未开启。")
+                    Text(usage.enabled ? "应用使用 AirType 麦克风后，这里会显示记录。" : "本地记录尚未开启。")
                         .font(.system(size: 13)).foregroundStyle(ConsoleTheme.secondary)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -1033,19 +1077,20 @@ private struct KeyMappingView: View {
     @ObservedObject var model: ConsoleViewModel
     @ObservedObject private var mappings = RemoteMappingStore.shared
     @State private var selectedDevice: SupportedRemoteID = .chromecast
+    @State private var resetDevice: SupportedRemoteID?
     var body: some View {
         VStack(spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("选择按钮要执行的动作").font(.system(size: 16, weight: .semibold))
+                    Text("按键").font(.system(size: 20, weight: .semibold))
                     Text("语音动作会准备音源并切换输入；普通按键只发送按键。")
                         .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
                 }
                 Spacer()
                 Button("语音动作") { model.selectedPage = .services }
-            }.padding(14).background(panelBackground(ConsoleTheme.surface, radius: 14))
+            }
             if !model.voiceActionStatus.isEmpty {
-                Text(model.voiceActionStatus).font(.system(size: 11)).foregroundStyle(ConsoleTheme.green)
+                Text(model.voiceActionStatus).font(.system(size: 12)).foregroundStyle(ConsoleTheme.amber)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 12) {
@@ -1097,6 +1142,20 @@ private struct KeyMappingView: View {
         }
         .padding(15)
         .background(panelBackground(ConsoleTheme.surface, radius: 17))
+        .alert("恢复这款遥控器的默认按键？", isPresented: Binding(get: { resetDevice != nil }, set: { if !$0 { resetDevice = nil } })) {
+            Button("取消", role: .cancel) { resetDevice = nil }
+            Button("恢复默认", role: .destructive) {
+                if let device = resetDevice { mappings.reset(device) }
+                resetDevice = nil
+            }
+        } message: {
+            Text("将重置 \(resetDevice?.title ?? "当前遥控器") 的全部按键映射。自定义录制的按键会被替换，其他型号和语音动作配置不受影响。")
+        }
+        .onAppear {
+            #if DEBUG
+            if CommandLine.arguments.contains("--review-reset") { resetDevice = selectedDevice }
+            #endif
+        }
     }
 
     private var mappingPanel: some View {
@@ -1158,6 +1217,7 @@ private struct KeyMappingView: View {
                     }
                 }
                 HStack {
+                    Text("共 \(sortedButtons.count) 个按键 · 滚动查看").font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
                     if !mappings.isEnabled(selectedDevice) {
                         Label(
                             L10n.text("关闭时不执行普通按键或语音动作；麦克风自动跟随仍可用", "Off disables mapped keys and voice actions, not microphone following"),
@@ -1168,7 +1228,7 @@ private struct KeyMappingView: View {
                     }
                     Spacer()
                     Button(L10n.text("恢复默认", "Reset")) {
-                        mappings.reset(selectedDevice)
+                        resetDevice = selectedDevice
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 11.5, weight: .semibold))
@@ -1179,6 +1239,20 @@ private struct KeyMappingView: View {
         }
         .padding(15)
         .background(panelBackground(ConsoleTheme.surface, radius: 17))
+        .alert("恢复这款遥控器的默认按键？", isPresented: Binding(get: { resetDevice != nil }, set: { if !$0 { resetDevice = nil } })) {
+            Button("取消", role: .cancel) { resetDevice = nil }
+            Button("恢复默认", role: .destructive) {
+                if let device = resetDevice { mappings.reset(device) }
+                resetDevice = nil
+            }
+        } message: {
+            Text("将重置 \(resetDevice?.title ?? "当前遥控器") 的全部按键映射。自定义录制的按键会被替换，其他型号和语音动作配置不受影响。")
+        }
+        .onAppear {
+            #if DEBUG
+            if CommandLine.arguments.contains("--review-reset") { resetDevice = selectedDevice }
+            #endif
+        }
     }
 }
 
@@ -1289,7 +1363,8 @@ private struct MappingRow: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 150)
+                    .tint(ConsoleTheme.text)
+                    .frame(width: 180)
                     Button(L10n.text("录制", "Record")) { showRecorder = true }
                     .font(.system(size: 11, weight: .medium))
                     .buttonStyle(.plain)
@@ -1300,7 +1375,7 @@ private struct MappingRow: View {
             }
         }
         .disabled(!enabled && button.remappable)
-        .frame(height: serviceDisabled ? 36 : 28)
+        .frame(height: serviceDisabled ? 44 : 36)
         .padding(.horizontal, 9)
         .background(ConsoleTheme.surface2)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -1358,7 +1433,7 @@ private struct KeyboardShortcutCaptureView: View {
             .overlay {
                 VStack(spacing: 5) {
                     Text(captured?.label ?? L10n.text("现在按下键盘按键", "Press a key now"))
-                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .font(.system(size: 18, weight: .semibold, design: .default))
                         .foregroundStyle(captured == nil ? ConsoleTheme.secondary : ConsoleTheme.text)
                     Text(L10n.text("支持左右修饰键、Fn 和组合键；Esc 取消", "Left/right modifiers, Fn and chords; Esc cancels"))
                         .font(.system(size: 10.5))
@@ -1367,12 +1442,14 @@ private struct KeyboardShortcutCaptureView: View {
                 .allowsHitTesting(false)
             }
 
-            HStack {
-                Button(L10n.text("取消", "Cancel"), action: onCancel)
+            HStack(spacing: 12) {
                 Spacer()
+                Button(L10n.text("取消", "Cancel"), action: onCancel)
                 Button(L10n.text("保存", "Save")) {
                     if let captured { onSave(captured) }
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(ConsoleTheme.green)
                 .disabled(captured == nil)
             }
         }
@@ -2126,6 +2203,15 @@ enum P1UIReview {
         model.microphoneGranted = true; model.accessibilityGranted = true
         model.inputMonitoringGranted = true; model.bluetoothGranted = true
         model.onDemandAudio = true; model.macInputEnabled = false
+        if scene == "audio-permissions" {
+            model.driverAvailable = false; model.accessibilityGranted = false
+            model.inputMonitoringGranted = false; model.bluetoothGranted = false
+        }
+        if scene == "audio-active" { model.remoteStreaming = true }
+        if scene == "audio-remote-no-mic-permission" {
+            AudioSourceSettings.shared.otherEnabled = false; model.microphoneGranted = false
+        }
+
         if scene == "unconfigured" { _ = services.setEnabled(true, for: .codex) }
         if scene == "guard" { model.voiceActionStatus = "请先将 Codex 窗口置于前台，再启动听写。" }
         if scene == "switch-failed" { model.voiceActionStatus = "音源未准备好，未发送听写快捷键。请检查遥控器连接与其他麦克风。" }
@@ -2138,9 +2224,10 @@ enum P1UIReview {
         }
         app.setActivationPolicy(.regular)
         let view = StudioMixerView(model: model)
-        let window = NSWindow(contentRect: NSRect(x: 200, y: 120, width: 775, height: 700),
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 120, width: 820, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-        window.title = "AirType · P1 界面测试"
+        window.title = "AirType · UI 审查"
+        window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = NSHostingView(rootView: view)
         window.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true)
         if CommandLine.arguments.contains("--review-app-picker") {
