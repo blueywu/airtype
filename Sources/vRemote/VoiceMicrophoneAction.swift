@@ -46,8 +46,11 @@ final class VoiceMicrophoneAction {
     func tick(readers: [MicrophoneReader]) {
         guard isBusy else { return }
         guard lease.isIntact else { cancelAll("系统输入已改变，AirType 不再接管；保留你当前的选择。"); return }
-        if let error = health() {
-            sourceFailed = true; status = error + " 请在应用中结束录音；在此之前保留 AirType 输入并停止送音，避免自动改用别的麦克风。"
+        let previousFailure = sourceFailed
+        let sourceError = health()
+        sourceFailed = sourceError != nil
+        if previousFailure && !sourceFailed { status = "已恢复可用音源。" }
+        if let error = sourceError { status = error + " 等待任一已勾选音源恢复；期间保留 AirType 输入并停止送音，不会改录未勾选的麦克风。"
         }
         if sourceFailed {
             for service in Array(sessions.keys) {

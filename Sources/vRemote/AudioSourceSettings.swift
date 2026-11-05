@@ -7,6 +7,19 @@ struct ExternalMicrophone: Identifiable, Equatable {
     var id: String
     var name: String
 }
+/// Selected sources are independent: one online source is enough. Readiness
+/// requires real frames, not merely a checked setting or a connected device.
+struct AudioSourceAvailability {
+    var remoteSelected: Bool
+    var remoteConnected: Bool
+    var remoteFrames: Bool
+    var otherSelected: Bool
+    var otherAvailable: Bool
+    var otherFrames: Bool
+    var available: Bool { (remoteSelected && remoteConnected) || (otherSelected && otherAvailable) }
+    var ready: Bool { (remoteSelected && remoteConnected && remoteFrames) || (otherSelected && otherAvailable && otherFrames) }
+}
+
 final class AudioSourceSettings: ObservableObject {
     static let shared = AudioSourceSettings(defaults: AirTypeEnvironment.defaults)
     private let defaults: UserDefaults
@@ -41,7 +54,7 @@ final class AudioSourceSettings: ObservableObject {
     }
     var summary: String {
         switch (remoteEnabled, otherEnabled) {
-        case (true, true): "遥控器 + 其他麦克风（混音）"
+        case (true, true): "遥控器 + 其他麦克风（在线时混音）"
         case (true, false): "仅遥控器麦克风"
         case (false, true): "仅其他麦克风"
         default: "未选择音源"

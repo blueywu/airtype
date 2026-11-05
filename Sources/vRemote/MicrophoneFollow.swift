@@ -147,7 +147,17 @@ final class MicrophoneFollowController: ObservableObject {
     let actions = VoiceMicrophoneAction()
     var remoteEnabled: () -> Bool = { AudioSourceSettings.shared.remoteEnabled }
     var preparePassiveSources: () -> String? = { AudioPipe.shared.prepareSources() }
-    var sourcesReady: () -> Bool = { AudioPipe.shared.isOutputRunning && AudioPipe.shared.otherInputReady }
+    var sourcesReady: () -> Bool = { AudioPipe.shared.isOutputRunning }
+    var otherEnabled: () -> Bool = { AudioSourceSettings.shared.otherEnabled }
+    var otherAvailable: () -> Bool = { AudioPipe.shared.isMacInputEnabled }
+    var otherFrames: () -> Bool = { AudioPipe.shared.otherInputReady }
+    var refreshSources: () -> Void = { AudioPipe.shared.refreshOptionalSource() }
+    private var lastFrameAt: [VoiceRemoteID: Date] = [:]
+    var sourceAvailability: AudioSourceAvailability {
+        AudioSourceAvailability(remoteSelected: remoteEnabled(), remoteConnected: preferredRemote?() != nil,
+            remoteFrames: preferredRemote?().flatMap { lastFrameAt[$0] }.map { Date().timeIntervalSince($0) < 1.0 } ?? false,
+            otherSelected: otherEnabled(), otherAvailable: otherAvailable(), otherFrames: otherFrames())
+    }
     private var passivePreparationFailed = false
     var readConsumers: () -> [MicrophoneReader] = MicrophoneReaders.current
     var setRoute: (Bool) -> Void = { AudioPipe.shared.setRemoteActive($0) }
@@ -164,7 +174,7 @@ final class MicrophoneFollowController: ObservableObject {
     func connectionChanged() { attempts = 0; lastRequest = .distantPast }
     func pause() { paused = true; poll() }
     func resume() { paused = false; attempts = 0; passivePreparationFailed = false; poll() }
-    func frameReceived(_ remote: VoiceRemoteID) { receivedFrame.insert(remote); attempts = 0 }
+    func frameReceived(_ remote: VoiceRemoteID) { receivedFrame.insert(remote); lastFrameAt[remote] = Date(); attempts = 0 }
     private func updateUsage(_ consumers: [MicrophoneReader]) {
         let groups = Dictionary(grouping: consumers) { $0.bundleID.isEmpty ? "pid:\($0.pid)" : $0.bundleID }
         for key in Array(usageIDs.keys) where groups[key] == nil {
@@ -177,7 +187,7 @@ final class MicrophoneFollowController: ObservableObject {
             }
         }
     }
-    func start() {
+    func configureActions() {
         actions.validate = { [weak self] service in
             guard let self, !self.paused else { return "麦克风已暂停，请先在麦克风页恢复。" }
             guard VoiceServiceStore.shared.isUsable(service) else { return "请先启用语音动作并配置快捷键。" }
@@ -185,24 +195,26 @@ final class MicrophoneFollowController: ObservableObject {
             if service == .codex && NSWorkspace.shared.frontmostApplication?.bundleIdentifier != service.bundleIdentifier {
                 return "请先将 Codex 放到前台，再使用它的语音动作。"
             }
-            guard !self.remoteEnabled() || self.preferredRemote?() != nil else { return "遥控器未连接，未发送听写快捷键。" }
             return nil
         }
         actions.ready = { [weak self] in
             guard let self else { return false }
-            return self.sourcesReady() && (!self.remoteEnabled() || !self.receivedFrame.isEmpty)
+            return self.sourcesReady() && self.sourceAvailability.ready
         }
         actions.health = { [weak self] in
-            if self?.remoteEnabled() == true && self?.preferredRemote?() == nil {
-                return "遥控器已断开。"
-            }
-            return AudioPipe.shared.sourceHealthError
+            guard let self else { return nil }
+            // During warmup, wait for any selected source to produce frames.
+            if self.actions.sessions.values.allSatisfy({ $0.phase == .preparing }) { return nil }
+            return self.sourceAvailability.available ? nil : "所有已勾选的音源当前都不可用。"
         }
         actions.dispatch = { service in
             guard let key = VoiceServiceStore.shared.profile(service).shortcut else { return }
             key.post(isDown: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { key.post(isDown: false) }
         }
+    }
+    func start() {
+        configureActions()
         VoiceServiceStore.shared.canEdit = { [weak self] _ in self?.actions.isBusy != true }
         RemoteMappingStore.shared.onVoiceAction = { [weak self] service, _, _ in
             guard let self else { return }
@@ -213,6 +225,7 @@ final class MicrophoneFollowController: ObservableObject {
     }
     func poll() {
         let next = readConsumers()
+        if wanted || actions.isBusy { refreshSources() }
         actions.tick(readers: next)
         if voiceActionBusy != actions.isBusy { voiceActionBusy = actions.isBusy }
         let allowed = next.filter { reader in actions.includes(reader) || !settings.allowed([reader]).isEmpty }
@@ -241,8 +254,8 @@ final class MicrophoneFollowController: ObservableObject {
                 if result == .sent { attempts += 1 }
             }
             message = "应用正在使用麦克风：" + Array(Set(allowed.map(\.name))).sorted().joined(separator: "、")
-            if remoteEnabled() && preferredRemote?() == nil { message = "应用已请求麦克风，但遥控器尚未连接。" }
-            if attempts >= 3 && streaming.isEmpty { message = "遥控器暂未送来音频，请检查连接，或暂停后重新启用。" }
+            if remoteEnabled() && preferredRemote?() == nil { message = sourceAvailability.ready ? "遥控器离线，正在使用已勾选的其他麦克风。" : "等待已勾选的音源上线。" }
+            if attempts >= 3 && streaming.isEmpty && !sourceAvailability.ready { message = "尚未收到音频，请检查已勾选的音源连接。" }
         } else if wanted || !streaming.isEmpty {
             if pendingStop == nil { pendingStop = Date() }
             if Date().timeIntervalSince(pendingStop!) >= 0.45 {
@@ -268,7 +281,7 @@ final class MicrophoneFollowController: ObservableObject {
         poll()
     }
     func audioStopped(_ remote: VoiceRemoteID) {
-        streaming.remove(remote); firstFrameAt[remote] = nil; receivedFrame.remove(remote)
+        streaming.remove(remote); firstFrameAt[remote] = nil; receivedFrame.remove(remote); lastFrameAt[remote] = nil
         if physical.remove(remote) != nil {
             let kind: SupportedRemoteID = remote == .chromecast ? .chromecast : .x6
             if let button = RemoteProfiles.buttons(for: kind).first(where: { $0.voiceControlled }) { RemoteMappingStore.shared.post(button: button, remote: kind, isDown: false) }

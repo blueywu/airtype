@@ -586,11 +586,11 @@ private struct StudioMixerView: View {
         if follow.actions.sourceFailed { return "音源中断 · 已停止送音" }
         if !sources.remoteEnabled && !sources.otherEnabled { return "尚未选择音源" }
         if !model.driverAvailable { return "音频驱动不可用" }
-        if sources.otherEnabled && !model.microphoneGranted { return "其他麦克风待授权" }
+        if sources.otherEnabled && !model.microphoneGranted && !sources.remoteEnabled { return "其他麦克风待授权" }
         if sources.remoteEnabled && !model.bluetoothGranted { return "蓝牙待授权" }
         if !model.accessibilityGranted || !model.inputMonitoringGranted { return "按键控制待授权" }
         if model.remoteStreaming || !follow.eligible.isEmpty { return "麦克风使用中" }
-        if sources.remoteEnabled && !model.bleConnected { return "等待遥控器连接" }
+        if sources.remoteEnabled && !model.bleConnected { return model.macInputEnabled ? "其他麦克风可用 · 遥控器离线" : "等待已勾选的音源上线" }
         return "已就绪 · 等待应用使用"
     }
 
@@ -598,7 +598,7 @@ private struct StudioMixerView: View {
         if follow.paused { return ConsoleTheme.secondary }
         if follow.actions.sourceFailed { return ConsoleTheme.red }
         if !sources.remoteEnabled && !sources.otherEnabled { return ConsoleTheme.amber }
-        if !model.driverAvailable || (sources.otherEnabled && !model.microphoneGranted) { return ConsoleTheme.red }
+        if !model.driverAvailable || (sources.otherEnabled && !model.microphoneGranted && !sources.remoteEnabled) { return ConsoleTheme.red }
         if (sources.remoteEnabled && (!model.bluetoothGranted || !model.bleConnected)) || !model.accessibilityGranted || !model.inputMonitoringGranted { return ConsoleTheme.amber }
         return model.remoteStreaming || !follow.eligible.isEmpty ? ConsoleTheme.green : ConsoleTheme.secondary
     }
@@ -761,7 +761,7 @@ private struct AudioSourcesView: View {
     var body: some View {
         ScrollView { VStack(alignment: .leading, spacing: 16) {
             Text("音源").font(.system(size: 20, weight: .semibold))
-            Text("默认只使用遥控器。勾选其他麦克风后，两路声音会混合送到 AirType 输入设备。")
+            Text("已勾选的音源在线时参与输入。其他麦克风离线不会影响遥控器；两路在线时自动混音。")
                 .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
             DeviceChecksView(model: model)
             VStack(alignment: .leading, spacing: 18) {
@@ -782,7 +782,7 @@ private struct AudioSourcesView: View {
                     }.tint(ConsoleTheme.text).disabled(!sources.otherEnabled)
                     Button("刷新设备") { sources.refresh() }
                 }
-                Text("“开始前的系统输入”会记住具体麦克风，不随 AirType 的临时切换变化。若系统已选 AirType，请在这里指定其他麦克风。")
+                Text("“开始前的系统输入”会记住具体麦克风，不随 AirType 的临时切换变化。若系统已选 AirType，可指定其他麦克风；暂时离线的音源会跳过。")
                     .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
             }.padding(16).background(ConsoleTheme.surface).cornerRadius(12)
              .disabled(controller.voiceActionBusy)

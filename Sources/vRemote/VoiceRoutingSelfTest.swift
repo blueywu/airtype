@@ -171,6 +171,44 @@ enum VoiceRoutingSelfTest {
             check(h.taps == [.typeless, .typeless], "existing session can stop even when source validation now fails")
             check(h.action.sessions[.typeless]?.phase == .stopping, "stop remains available after source disconnect or pause")
         }
+        do {
+            let controller = MicrophoneFollowController()
+            var remoteOnline = true, otherOnline = false, otherHasFrames = false
+            controller.remoteEnabled = { true }; controller.otherEnabled = { true }
+            controller.preferredRemote = { remoteOnline ? .chromecast : nil }
+            controller.otherAvailable = { otherOnline }; controller.otherFrames = { otherHasFrames }
+            controller.sourcesReady = { true }; controller.refreshSources = {}
+            controller.configureActions()
+            let action = controller.actions
+            var current = "original", sent = 0
+            action.lease.current = { current }; action.lease.target = { "airtype" }
+            action.lease.change = { current = $0; return true }
+            action.prepare = { nil }; action.validate = { _ in nil }; action.dispatch = { _ in sent += 1 }
+            action.request(.typeless)
+            check(!action.ready(), "connected remote without frames does not send a shortcut")
+            controller.frameReceived(.chromecast); action.tick(readers: [])
+            check(sent == 1 && current == "airtype", "both checked with Bluetooth microphone offline still starts remote dictation")
+            let reader = MicrophoneReader(pid: 1, bundleID: VoiceInputMethod.typeless.bundleIdentifier, name: "Typeless", path: "")
+            action.tick(readers: [reader])
+            otherOnline = true; otherHasFrames = true; action.tick(readers: [reader])
+            check(!action.sourceFailed && sent == 1, "optional microphone reconnect joins without toggling host")
+            otherOnline = false; otherHasFrames = false; action.tick(readers: [reader])
+            check(!action.sourceFailed && action.isBusy && current == "airtype", "optional microphone disconnect keeps remote session and route")
+            otherOnline = true; otherHasFrames = true; remoteOnline = false
+            action.tick(readers: [reader])
+            check(!action.sourceFailed && action.ready(), "remote disconnect does not stop an online selected other microphone")
+            otherOnline = false; otherHasFrames = false; action.tick(readers: [reader])
+            check(action.sourceFailed && current == "airtype", "all sources offline silences without switching recorder input")
+            remoteOnline = true; controller.frameReceived(.chromecast); action.tick(readers: [reader])
+            check(!action.sourceFailed && action.isBusy && sent == 1, "selected remote recovery resumes without a second host shortcut")
+            action.cancelAll()
+            remoteOnline = false; otherOnline = true; otherHasFrames = true
+            action.request(.typeless); action.tick(readers: [])
+            check(sent == 2 && !action.sourceFailed, "both checked with remote offline starts using other microphone")
+            action.cancelAll()
+            controller.remoteEnabled = { false }; controller.otherEnabled = { false }
+            check(!controller.sourceAvailability.ready && !controller.sourceAvailability.available, "unselected sources never participate")
+        }
         check(AudioSourceSettings.resolve(selection: "", priorDefault: "headset", available: ["headset"]) == "headset", "default-source option pins original physical UID")
         check(AudioSourceSettings.resolve(selection: "usb", priorDefault: "headset", available: ["headset", "usb"]) == "usb", "explicit microphone ignores current system input")
         check(AudioSourceSettings.resolve(selection: "usb", priorDefault: "headset", available: ["headset"]) == nil, "disconnected selected source never falls back to another microphone")
@@ -186,9 +224,19 @@ enum VoiceRoutingSelfTest {
         sources.otherEnabled = true; sources.otherUID = "usb"
         let reload = AudioSourceSettings(defaults: defaults)
         check(reload.otherEnabled && reload.otherUID == "usb", "explicit source configuration persists")
+        let selected = AudioSourceSettings.shared
+        selected.remoteEnabled = true; selected.otherEnabled = true
+        selected.otherUID = "offline-bluetooth-microphone"
+        let audio = AudioPipe(onDemand: true, macInputEnabled: false, remoteInputEnabled: true)
+        check(audio.prepareSources() == nil, "real source preparation accepts selected offline Bluetooth microphone alongside remote")
+        check(!audio.isMacInputEnabled && audio.isRemoteInputEnabled, "offline optional channel is excluded while remote channel stays enabled")
+        check(selected.otherEnabled && selected.otherUID == "offline-bluetooth-microphone", "runtime availability never clears the selected optional source")
+        selected.otherUID = ""
+        check(audio.prepareSources() == nil, "unresolvable start-time default input does not block remote preparation")
+        audio.stop()
         let follow = MicrophoneFollowController()
         follow.setRoute = { _ in }; follow.readConsumers = { [] }; follow.preparePassiveSources = { nil }
-        follow.closeRemotes = {}; follow.remoteEnabled = { true }
+        follow.refreshSources = {}; follow.closeRemotes = {}; follow.remoteEnabled = { true }
         var voiceCalls = 0
         RemoteMappingStore.shared.onVoiceAction = { _, _, _ in voiceCalls += 1 }
         RemoteMappingStore.shared.setEnabled(false, for: .chromecast)

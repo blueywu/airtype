@@ -77,39 +77,44 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     private var captureUID: String?
     private var captureHasFrames = false
     private var selectedCaptureDevice: AVCaptureDevice?
-    var sourceHealthError: String? {
-        stateLock.lock(); defer { stateLock.unlock() }
-        if macInputEnabled, let device = selectedCaptureDevice, !device.isConnected {
-            return "选定的其他麦克风已断开，不自动替换音源。"
-        }
-        return nil
-    }
+    private var captureFrameAt = Date.distantPast
+    private var sourceRefreshAt = Date.distantPast
+    /// The capture UID is pinned before routing; reconnect never follows the
+    /// moving default input or silently chooses an unrelated microphone.
     var otherInputReady: Bool {
         stateLock.lock(); defer { stateLock.unlock() }
-        return !macInputEnabled || (captureHasFrames && selectedCaptureDevice?.isConnected == true)
+        return macInputEnabled && captureHasFrames && selectedCaptureDevice?.isConnected == true
+            && Date().timeIntervalSince(captureFrameAt) < 1.0
     }
-    /// Resolve before changing the system input. Excludes our virtual device to prevent feedback.
     func prepareSources() -> String? {
         let settings = AudioSourceSettings.shared
         guard settings.remoteEnabled || settings.otherEnabled else { return "请至少选择一个麦克风音源。" }
         guard isOutputDeviceAvailable else { return "找不到 AirType 虚拟麦克风，请检查音频驱动。" }
-        var resolved: String?
-        if settings.otherEnabled {
-            guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
-                return "请先在系统设置中允许 AirType 使用麦克风，再启用其他麦克风。"
-            }
-            let available = AudioSourceSettings.captureDevices().map(\.uniqueID)
-            resolved = AudioSourceSettings.resolve(selection: settings.otherUID, priorDefault: SystemInputRoute.currentUID, available: available)
-            guard resolved != nil else { return "其他麦克风不可用，请在音频页选择具体设备；不会自动换用别的麦克风。" }
-        }
+        let candidate = settings.otherUID.isEmpty ? SystemInputRoute.currentUID : settings.otherUID
+        let pinned = settings.otherEnabled && candidate != SystemInputRoute.targetUID ? candidate : nil
         stateLock.lock()
-        let changed = captureUID != resolved
-        captureUID = resolved
-        if changed { captureHasFrames = false }
+        let changed = captureUID != pinned
+        captureUID = pinned
+        if changed { captureHasFrames = false; captureFrameAt = .distantPast }
         stateLock.unlock()
         if changed { captureQueue.sync { releaseMacCapture() } }
-        setInputEnabled(mac: settings.otherEnabled, remote: settings.remoteEnabled, persist: false)
+        refreshOptionalSource(force: true)
         return nil
+    }
+
+    /// Called on the main thread during demand, including recovery from total
+    /// source loss. Persisted selection is never rewritten by device presence.
+    func refreshOptionalSource(force: Bool = false) {
+        guard force || Date().timeIntervalSince(sourceRefreshAt) >= 0.75 else { return }
+        sourceRefreshAt = Date()
+        let settings = AudioSourceSettings.shared
+        stateLock.lock(); let pinned = captureUID; stateLock.unlock()
+        let available = settings.otherEnabled
+            && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            && AudioSourceSettings.captureDevices().contains { $0.uniqueID == pinned }
+        if force || available != isMacInputEnabled || settings.remoteEnabled != isRemoteInputEnabled {
+            setInputEnabled(mac: available, remote: settings.remoteEnabled, persist: false)
+        }
     }
 
     init(onDemand: Bool = AppStorage.onDemandAudio,
@@ -299,7 +304,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         for input in captureSession.inputs { captureSession.removeInput(input) }
         captureSession.commitConfiguration()
         captureConfigured = false
-        stateLock.lock(); captureHasFrames = false; selectedCaptureDevice = nil; stateLock.unlock()
+        stateLock.lock(); captureHasFrames = false; captureFrameAt = .distantPast; selectedCaptureDevice = nil; stateLock.unlock()
         print("[AUDIO] 电脑麦克风采集与设备绑定已释放")
     }
 
@@ -405,7 +410,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
             macLevelAt = Date()
         }
 
-        stateLock.lock(); captureHasFrames = true; stateLock.unlock()
+        stateLock.lock(); captureHasFrames = true; captureFrameAt = Date(); stateLock.unlock()
         guard isMixActive else { return }
         schedule(
             monoSamples: floats,
