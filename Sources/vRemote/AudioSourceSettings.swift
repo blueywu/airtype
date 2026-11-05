@@ -24,20 +24,24 @@ final class AudioSourceSettings: ObservableObject {
     static let shared = AudioSourceSettings(defaults: AirTypeEnvironment.defaults)
     private let defaults: UserDefaults
     @Published var remoteEnabled: Bool { didSet { defaults.set(remoteEnabled, forKey: "audioSources.remote") } }
-    @Published var otherEnabled: Bool { didSet { defaults.set(otherEnabled, forKey: "audioSources.other") } }
-    @Published var otherUID: String { didSet { defaults.set(otherUID, forKey: "audioSources.otherUID") } }
+    @Published var otherEnabled: Bool { didSet { defaults.set(otherEnabled, forKey: "audioSources.builtInBeta") } }
+    @Published var otherUID: String { didSet { defaults.set(otherUID, forKey: "audioSources.builtInBetaUID") } }
     @Published private(set) var devices: [ExternalMicrophone] = []
     init(defaults: UserDefaults) {
         self.defaults = defaults
-        remoteEnabled = defaults.object(forKey: "audioSources.remote") as? Bool ?? true
+        remoteEnabled = defaults.object(forKey: "audioSources.remote") as? Bool ?? false
         // The old MacBook toggle did not select arbitrary external microphones.
         // External capture requires a fresh, explicit opt-in.
-        otherEnabled = defaults.bool(forKey: "audioSources.other")
-        otherUID = defaults.string(forKey: "audioSources.otherUID") ?? ""
+        otherEnabled = defaults.bool(forKey: "audioSources.builtInBeta")
+        otherUID = defaults.string(forKey: "audioSources.builtInBetaUID") ?? Self.builtInMicrophoneUID ?? "unavailable-built-in-microphone"
     }
     func refresh() {
         devices = Self.captureDevices().map { ExternalMicrophone(id: $0.uniqueID, name: $0.localizedName) }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+    static var builtInMicrophoneUID: String? {
+        AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInMicrophone], mediaType: .audio, position: .unspecified)
+            .devices.first(where: { $0.isConnected })?.uniqueID
     }
     static func captureDevices() -> [AVCaptureDevice] {
         let types: [AVCaptureDevice.DeviceType]

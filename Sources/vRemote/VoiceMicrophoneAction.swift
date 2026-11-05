@@ -92,7 +92,7 @@ final class VoiceMicrophoneAction {
                 if !reading {
                     if session.absentSince == nil { session.absentSince = now() }
                     if now().timeIntervalSince(session.absentSince!) >= 0.6 {
-                        sessions.removeValue(forKey: service); continue
+                        sessions.removeValue(forKey: service); status = ""; continue
                     }
                 } else { session.absentSince = nil }
                 if session.phase == .stopping, now() >= session.deadline {

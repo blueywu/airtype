@@ -152,10 +152,9 @@ final class MicrophoneFollowController: ObservableObject {
     var otherAvailable: () -> Bool = { AudioPipe.shared.isMacInputEnabled }
     var otherFrames: () -> Bool = { AudioPipe.shared.otherInputReady }
     var refreshSources: () -> Void = { AudioPipe.shared.refreshOptionalSource() }
-    private var lastFrameAt: [VoiceRemoteID: Date] = [:]
     var sourceAvailability: AudioSourceAvailability {
         AudioSourceAvailability(remoteSelected: remoteEnabled(), remoteConnected: preferredRemote?() != nil,
-            remoteFrames: preferredRemote?().flatMap { lastFrameAt[$0] }.map { Date().timeIntervalSince($0) < 1.0 } ?? false,
+            remoteFrames: preferredRemote?().map { receivedFrame.contains($0) } ?? false,
             otherSelected: otherEnabled(), otherAvailable: otherAvailable(), otherFrames: otherFrames())
     }
     private var passivePreparationFailed = false
@@ -174,7 +173,7 @@ final class MicrophoneFollowController: ObservableObject {
     func connectionChanged() { attempts = 0; lastRequest = .distantPast }
     func pause() { paused = true; poll() }
     func resume() { paused = false; attempts = 0; passivePreparationFailed = false; poll() }
-    func frameReceived(_ remote: VoiceRemoteID) { receivedFrame.insert(remote); lastFrameAt[remote] = Date(); attempts = 0 }
+    func frameReceived(_ remote: VoiceRemoteID) { receivedFrame.insert(remote); attempts = 0 }
     private func updateUsage(_ consumers: [MicrophoneReader]) {
         let groups = Dictionary(grouping: consumers) { $0.bundleID.isEmpty ? "pid:\($0.pid)" : $0.bundleID }
         for key in Array(usageIDs.keys) where groups[key] == nil {
@@ -218,20 +217,32 @@ final class MicrophoneFollowController: ObservableObject {
         VoiceServiceStore.shared.canEdit = { [weak self] _ in self?.actions.isBusy != true }
         RemoteMappingStore.shared.onVoiceAction = { [weak self] service, _, _ in
             guard let self else { return }
-            self.actions.request(service); self.poll()
+            self.handleVoiceAction(service)
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in self?.poll() }
         poll()
+    }
+    func handleVoiceAction(_ service: VoiceInputMethod) {
+        if !remoteEnabled() {
+            // Saved voice bindings become ordinary app shortcuts in keyboard mode.
+            guard VoiceServiceStore.shared.isUsable(service) else { return }
+            actions.dispatch(service)
+            return
+        }
+        actions.request(service); poll()
     }
     func poll() {
         let next = readConsumers()
         if wanted || actions.isBusy { refreshSources() }
         actions.tick(readers: next)
         if voiceActionBusy != actions.isBusy { voiceActionBusy = actions.isBusy }
-        let allowed = next.filter { reader in actions.includes(reader) || !settings.allowed([reader]).isEmpty }
+        let allowed = next.filter { reader in
+            actions.includes(reader) || !settings.allowed([reader]).isEmpty ||
+                (settings.specified && VoiceServiceStore.shared.available.contains { $0.matchesAudioBundle(reader.bundleID) })
+        }
         if readers != next { readers = next }
         if eligible != allowed { eligible = allowed }
-        let active = (!allowed.isEmpty || actions.isBusy) && !paused && !actions.sourceFailed
+        let active = remoteEnabled() && (!allowed.isEmpty || actions.isBusy) && !paused && !actions.sourceFailed
         if !active { passivePreparationFailed = false }
         updateUsage(active ? allowed : [])
         if active {
@@ -266,6 +277,7 @@ final class MicrophoneFollowController: ObservableObject {
         if settings.specified && allowed.isEmpty && !next.isEmpty { message = "未在允许名单中：" + Array(Set(next.map(\.name))).sorted().joined(separator: "、") }
         if !actions.status.isEmpty { message = actions.status }
         if paused { message = "AirType 输入已暂停，点击「恢复 AirType 输入」继续。" }
+        if !remoteEnabled() { message = "遥控器麦克风已关闭；按键只发送快捷键。" }
         onChanged?()
     }
     func audioStarted(_ remote: VoiceRemoteID, reason: UInt8) {
@@ -278,10 +290,11 @@ final class MicrophoneFollowController: ObservableObject {
             if RemoteMappingStore.shared.isEnabled(kind) { RemoteMappingStore.shared.post(button: button, remote: kind, isDown: true) }
 
         }
+        if !remoteEnabled() { closeRemotes?(); streaming.remove(remote); receivedFrame.remove(remote) }
         poll()
     }
     func audioStopped(_ remote: VoiceRemoteID) {
-        streaming.remove(remote); firstFrameAt[remote] = nil; receivedFrame.remove(remote); lastFrameAt[remote] = nil
+        streaming.remove(remote); firstFrameAt[remote] = nil; receivedFrame.remove(remote)
         if physical.remove(remote) != nil {
             let kind: SupportedRemoteID = remote == .chromecast ? .chromecast : .x6
             if let button = RemoteProfiles.buttons(for: kind).first(where: { $0.voiceControlled }) { RemoteMappingStore.shared.post(button: button, remote: kind, isDown: false) }

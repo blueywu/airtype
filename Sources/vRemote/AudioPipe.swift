@@ -88,7 +88,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     }
     func prepareSources() -> String? {
         let settings = AudioSourceSettings.shared
-        guard settings.remoteEnabled || settings.otherEnabled else { return "请至少选择一个麦克风音源。" }
+        guard settings.remoteEnabled else { return "遥控器麦克风已关闭；请使用应用原有麦克风。" }
         guard isOutputDeviceAvailable else { return "找不到 AirType 虚拟麦克风，请检查音频驱动。" }
         let candidate = settings.otherUID.isEmpty ? SystemInputRoute.currentUID : settings.otherUID
         let pinned = settings.otherEnabled && candidate != SystemInputRoute.targetUID ? candidate : nil
@@ -109,7 +109,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
         sourceRefreshAt = Date()
         let settings = AudioSourceSettings.shared
         stateLock.lock(); let pinned = captureUID; stateLock.unlock()
-        let available = settings.otherEnabled
+        let available = settings.remoteEnabled && settings.otherEnabled
             && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             && AudioSourceSettings.captureDevices().contains { $0.uniqueID == pinned }
         if force || available != isMacInputEnabled || settings.remoteEnabled != isRemoteInputEnabled {
@@ -118,7 +118,7 @@ final class AudioPipe: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     }
 
     init(onDemand: Bool = AppStorage.onDemandAudio,
-         macInputEnabled: Bool = AudioSourceSettings.shared.otherEnabled,
+         macInputEnabled: Bool = AudioSourceSettings.shared.remoteEnabled && AudioSourceSettings.shared.otherEnabled,
          remoteInputEnabled: Bool = AudioSourceSettings.shared.remoteEnabled) {
         self.onDemandAudio = onDemand
         self.macInputEnabled = macInputEnabled

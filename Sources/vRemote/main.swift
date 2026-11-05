@@ -275,13 +275,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         debugWindow.onMacInputEnabledChanged = { [weak self] enabled in
             AudioSourceSettings.shared.otherEnabled = enabled
-            AudioPipe.shared.setInputEnabled(mac: enabled, remote: AudioSourceSettings.shared.remoteEnabled, persist: false)
+            AudioPipe.shared.setInputEnabled(mac: enabled && AudioSourceSettings.shared.remoteEnabled, remote: AudioSourceSettings.shared.remoteEnabled, persist: false)
             self?.microphoneFollow.sourceConfigurationChanged()
             self?.updateStatus()
         }
         debugWindow.onRemoteInputEnabledChanged = { [weak self] enabled in
             AudioSourceSettings.shared.remoteEnabled = enabled
-            AudioPipe.shared.setInputEnabled(mac: AudioSourceSettings.shared.otherEnabled, remote: enabled, persist: false)
+            AudioPipe.shared.setInputEnabled(mac: AudioSourceSettings.shared.otherEnabled && enabled, remote: enabled, persist: false)
             self?.microphoneFollow.sourceConfigurationChanged()
             self?.updateStatus()
         }

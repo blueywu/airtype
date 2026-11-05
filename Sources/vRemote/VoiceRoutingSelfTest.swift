@@ -219,8 +219,11 @@ enum VoiceRoutingSelfTest {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(suite)
         AirTypeEnvironment.defaults = defaults; AirTypeEnvironment.usageFile = directory.appendingPathComponent("usage.json")
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        defaults.set(true, forKey: "audioSources.other")
+        defaults.set("bluetooth-legacy", forKey: "audioSources.otherUID")
         let sources = AudioSourceSettings(defaults: defaults)
-        check(sources.remoteEnabled && !sources.otherEnabled, "new source configuration defaults to remote only")
+        check(!sources.remoteEnabled && !sources.otherEnabled, "new install starts as keyboard with remote microphone and Beta off")
+        check(defaults.string(forKey: "audioSources.otherUID") == "bluetooth-legacy", "old external source preference is preserved without enabling built-in Beta")
         sources.otherEnabled = true; sources.otherUID = "usb"
         let reload = AudioSourceSettings(defaults: defaults)
         check(reload.otherEnabled && reload.otherUID == "usb", "explicit source configuration persists")
@@ -234,6 +237,30 @@ enum VoiceRoutingSelfTest {
         selected.otherUID = ""
         check(audio.prepareSources() == nil, "unresolvable start-time default input does not block remote preparation")
         audio.stop()
+        selected.remoteEnabled = false; selected.otherEnabled = true
+        let keyboardAudio = AudioPipe(onDemand: true)
+        check(!keyboardAudio.isMacInputEnabled && !keyboardAudio.isRemoteInputEnabled, "master off suppresses persisted Beta capture at launch")
+        keyboardAudio.stop(); selected.remoteEnabled = true
+        do {
+            let controller = MicrophoneFollowController()
+            controller.remoteEnabled = { false }; controller.refreshSources = {}
+            controller.readConsumers = { [.init(pid: 7, bundleID: "recorder", name: "Recorder", path: "")] }
+            var routes: [Bool] = [], sent = 0
+            controller.setRoute = { routes.append($0) }; controller.closeRemotes = {}
+            controller.actions.dispatch = { _ in sent += 1 }
+            _ = VoiceServiceStore.shared.setEnabled(true, for: .typeless)
+            controller.handleVoiceAction(.typeless); controller.poll()
+            check(sent == 1 && !controller.actions.isBusy, "master off sends stored application shortcut without creating a microphone session")
+            check(routes.isEmpty, "master off ignores passive virtual microphone readers")
+            controller.remoteEnabled = { true }
+            controller.settings.specified = true
+            controller.readConsumers = { [.init(pid: 9, bundleID: VoiceInputMethod.typeless.bundleIdentifier, name: "Typeless", path: "")] }
+            controller.preparePassiveSources = { nil }; controller.preferredRemote = { .chromecast }
+            controller.openRemote = { _ in .sent }
+            controller.poll()
+            check(controller.eligible.count == 1 && routes.last == true, "keyboard-started enabled service triggers specified mode without remote voice action")
+            controller.stop()
+        }
         let follow = MicrophoneFollowController()
         follow.setRoute = { _ in }; follow.readConsumers = { [] }; follow.preparePassiveSources = { nil }
         follow.refreshSources = {}; follow.closeRemotes = {}; follow.remoteEnabled = { true }
