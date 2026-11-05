@@ -270,6 +270,22 @@ enum VoiceRoutingSelfTest {
         follow.audioStarted(.chromecast, reason: 0x03); follow.audioStopped(.chromecast)
         check(voiceCalls == 0, "disabled button control has no legacy voice-action fallback")
         follow.stop()
+        do {
+            var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            func record(_ days: Int, _ seconds: Double?, _ confirmed: Bool = true) -> LocalUsageStore.Record {
+                let start = calendar.date(byAdding: .day, value: -days, to: now)!
+                return .init(id: UUID(), attemptedAt: start, startedAt: confirmed ? start : nil, endedAt: start, duration: seconds, service: "input", source: "application", action: "inputDevice", application: .init(bundleID: "test.app", name: "Test"), outcome: "completed")
+            }
+            let data = [record(0, 120), record(6, 60), record(7, 600), record(0, 900, false), record(1, nil), record(-1, 500)]
+            let week = UsageSummary(records: data, days: 7, now: now, calendar: calendar)
+            check(week.count == 3 && week.days.count == 7, "charts include confirmed sessions within local seven-day window only")
+            check(abs(week.minutes - 3) < 0.001, "charts exclude unconfirmed and unknown duration without inventing elapsed time")
+            check(week.apps.count == 1 && week.apps[0].count == 3, "app pie uses confirmed session count independently from known duration")
+            check(UsageSummary(records: data, days: 30, now: now, calendar: calendar).count == 4, "thirty-day chart includes earlier history and excludes future entries")
+            let empty = UsageSummary(records: [], days: 7, now: now, calendar: calendar)
+            check(empty.minutes == 0 && empty.apps.isEmpty && empty.count == 0, "empty charts show zero without fabricated demo history")
+        }
         FileHandle.standardError.write(Data("[ROUTING-TEST] \(checks) checks; \(failures) failures\n".utf8))
         return failures == 0
     }

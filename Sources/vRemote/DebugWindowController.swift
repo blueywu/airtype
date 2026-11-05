@@ -108,20 +108,55 @@ enum PermissionKind: String, Identifiable, CaseIterable {
 }
 
 private enum ConsoleTheme {
-    static let panel = Color(red: 0.055, green: 0.059, blue: 0.067)
-    static let surface = Color(red: 0.083, green: 0.091, blue: 0.103)
-    static let surface2 = Color(red: 0.102, green: 0.112, blue: 0.124)
-    static let line = Color(red: 0.22, green: 0.23, blue: 0.25)
-    static let lineSoft = Color(red: 0.15, green: 0.16, blue: 0.18)
-    static let text = Color(red: 0.93, green: 0.94, blue: 0.95)
-    static let secondary = Color(red: 0.55, green: 0.57, blue: 0.61)
-    static let tertiary = Color(red: 0.50, green: 0.53, blue: 0.57)
-    static let green = Color(red: 0.31, green: 0.82, blue: 0.53)
-    static let amber = Color(red: 0.96, green: 0.61, blue: 0.19)
-    static let amberDeep = Color(red: 0.16, green: 0.13, blue: 0.09)
-    static let red = Color(red: 0.94, green: 0.33, blue: 0.34)
-    static let redDeep = Color(red: 0.25, green: 0.08, blue: 0.09)
-    static let black = Color(red: 0.025, green: 0.028, blue: 0.032)
+    static let panel = Color(nsColor: .windowBackgroundColor)
+    static let surface = Color(nsColor: .controlBackgroundColor).opacity(0.48)
+    static let surface2 = Color(nsColor: .controlBackgroundColor).opacity(0.64)
+    static let line = Color.primary.opacity(0.10)
+    static let lineSoft = Color.primary.opacity(0.06)
+    static let text = Color(nsColor: .labelColor)
+    static let secondary = Color(nsColor: .secondaryLabelColor)
+    static let tertiary = Color(nsColor: .secondaryLabelColor)
+    static let green = Color(red: 0.18, green: 0.67, blue: 0.47)
+    static let amber = Color.orange
+    static let amberDeep = Color.orange.opacity(0.08)
+    static let red = Color.red
+    static let redDeep = Color.red.opacity(0.08)
+    static let black = Color.primary.opacity(0.035)
+}
+
+private struct FrostedWindowBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+private struct InlineHelp: View {
+    let title: String
+    let text: String
+    @State private var shown = false
+    var body: some View {
+        Button { shown.toggle() } label: {
+            Image(systemName: "questionmark.circle").font(.system(size: 14)).foregroundStyle(ConsoleTheme.secondary)
+                .frame(width: 26, height: 26).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel(title).help(text)
+        .onHover { inside in shown = inside }
+        .onAppear {
+            #if DEBUG
+            if CommandLine.arguments.contains("--review-help") && title == "怎样使用遥控器收音？" { shown = true }
+            #endif
+        }
+        .popover(isPresented: $shown, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(text).font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary).fixedSize(horizontal: false, vertical: true)
+            }.padding(18).frame(width: 360)
+        }
+    }
 }
 
 enum LogoAsset {
@@ -376,13 +411,8 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         window.isMovableByWindowBackground = true
         window.center()
         window.isReleasedWhenClosed = false
-        window.backgroundColor = NSColor(
-            red: 0.055,
-            green: 0.059,
-            blue: 0.067,
-            alpha: 1
-        )
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = .clear
+        window.isOpaque = false
         window.minSize = windowSize
         window.maxSize = windowSize
         super.init(window: window)
@@ -407,7 +437,6 @@ final class DebugWindowController: NSWindowController, NSWindowDelegate {
         }
         window.contentView = NSHostingView(
             rootView: StudioMixerView(model: model)
-                .preferredColorScheme(.dark)
                 .frame(
                     width: windowSize.width,
                     height: windowSize.height
@@ -494,11 +523,10 @@ private struct StudioMixerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header.frame(height: 52)
-            ConsolePageSelector(selection: $model.selectedPage).padding(.top, 16)
+            header.frame(height: 42)
             if model.selectedPage == .mixer {
                 Spacer().frame(height: 15)
-                AudioSourcesView(model: model).frame(height: 570)
+                AudioSourcesView(model: model).frame(height: 624)
             } else {
                 Spacer().frame(height: 15)
                 Group {
@@ -509,7 +537,7 @@ private struct StudioMixerView: View {
                     case .usage: LocalUsageView()
                     case .mixer: EmptyView()
                     }
-                }.frame(height: 570)
+                }.frame(height: 624)
             }
             #if DEBUG
             if CommandLine.arguments.contains("--p1-ui-review") {
@@ -522,8 +550,7 @@ private struct StudioMixerView: View {
         .padding(.top, 30)
         .padding(.bottom, 16)
         .frame(width: 820, height: 760)
-        .background(ConsoleTheme.panel)
-        .preferredColorScheme(.dark)
+        .background(FrostedWindowBackground())
         .tint(ConsoleTheme.green)
         .font(.system(size: 13))
         .controlSize(.regular)
@@ -545,7 +572,7 @@ private struct StudioMixerView: View {
             Image(nsImage: WaveformIcon.image)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 32, height: 32)
+                .frame(width: 26, height: 26)
             VStack(alignment: .leading, spacing: 1) {
                 Text("AirType")
                     .font(.system(size: 20, weight: .semibold))
@@ -554,7 +581,8 @@ private struct StudioMixerView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(ConsoleTheme.secondary)
             }
-            Spacer()
+            ConsolePageSelector(selection: $model.selectedPage).padding(.leading, 18)
+            Spacer(minLength: 10)
             HStack(spacing: 7) {
                 Circle()
                     .fill(statusColor)
@@ -566,16 +594,7 @@ private struct StudioMixerView: View {
             if (sources.remoteEnabled && (!model.driverAvailable || !model.bluetoothGranted)) || !model.accessibilityGranted || !model.inputMonitoringGranted {
                 Button("检查设置") { model.selectedPage = .mixer }
             }
-            if model.remoteStreaming || !follow.eligible.isEmpty || follow.paused {
-                Button(follow.paused ? "恢复输入" : "暂停输入") {
-                    if follow.paused { follow.resume() } else { follow.pause() }
-                }
-                    .buttonStyle(ConsoleButtonStyle(
-                        tone: ConsoleButtonTone.error,
-                        compact: true,
-                        consoleSized: true
-                    ))
-            }
+
         }
         .padding(.horizontal, 0)
     }
@@ -583,14 +602,14 @@ private struct StudioMixerView: View {
     private var statusText: String {
         if follow.paused { return "输入已暂停" }
         if follow.actions.sourceFailed { return "音源中断 · 已停止送音" }
-        if !sources.remoteEnabled { return "按键模式 · 语音使用应用原麦克风" }
+        if !sources.remoteEnabled { return "按键模式" }
         if !model.driverAvailable { return "音频驱动不可用" }
         if sources.otherEnabled && !model.microphoneGranted && !sources.remoteEnabled { return "其他麦克风待授权" }
         if sources.remoteEnabled && !model.bluetoothGranted { return "蓝牙待授权" }
         if !model.accessibilityGranted || !model.inputMonitoringGranted { return "按键控制待授权" }
         if model.remoteStreaming || !follow.eligible.isEmpty { return "麦克风使用中" }
         if sources.remoteEnabled && !model.bleConnected { return model.macInputEnabled ? "其他麦克风可用 · 遥控器离线" : "等待已勾选的音源上线" }
-        return "已就绪 · 等待应用使用"
+        return "已就绪"
     }
 
     private var statusColor: Color {
@@ -734,7 +753,8 @@ private struct ConsolePageSelector: View {
                             ? ConsoleTheme.text
                             : ConsoleTheme.secondary
                     )
-                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .frame(width: 104, height: 34)
+                    .contentShape(Rectangle())
                     .background(
                         selection == page
                             ? ConsoleTheme.surface2
@@ -748,31 +768,35 @@ private struct ConsolePageSelector: View {
             }
         }
         .padding(3)
-        .background(ConsoleTheme.black.opacity(0.72))
+        .background(ConsoleTheme.black)
         .clipShape(RoundedRectangle(cornerRadius: 11))
     }
 }
 
 private struct AudioSourcesView: View {
-    @State private var showScenarios = false
     @ObservedObject var model: ConsoleViewModel
     @ObservedObject private var sources = AudioSourceSettings.shared
     @ObservedObject private var controller = MicrophoneFollowController.shared
     var body: some View {
-        ScrollViewReader { proxy in ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("语音设置").font(.system(size: 20, weight: .semibold))
-                Text("先决定是否使用遥控器收音，再配置开麦方式和按钮动作。")
-                    .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
-                VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 16) {
+                HStack(spacing: 8) {
+                    Text("语音设置").font(.system(size: 20, weight: .semibold))
+                    InlineHelp(title: "怎样使用遥控器收音？", text: "只当小键盘：关闭右侧开关。\n键盘或鼠标录音：开启后，将录音应用的输入选为 vRemoteDr 2ch；自动跟随或允许的指定应用都可使用。\n遥控器听写：配置下方语音动作，再到按键映射绑定。\nvRemoteDr 2ch 在系统输入和输出列表中均可能可见。仅将它用作录音输入，播放使用扬声器或耳机。关闭此开关不会隐藏设备；若应用仍选择它，请改回实际麦克风。")
+                    Spacer()
+                    Text("遥控器麦克风").font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
                     Toggle("使用遥控器麦克风", isOn: Binding(get: { sources.remoteEnabled }, set: {
                         sources.remoteEnabled = $0; model.onRemoteInputEnabledChanged?($0)
-                    })).toggleStyle(.switch).disabled(controller.voiceActionBusy)
-                    .help("关闭后不再通过 AirType 收音，也不主动切换输入设备。若录音应用仍选择 vRemoteDr 2ch，请将它改回实际麦克风。")
-                    Text(sources.remoteEnabled ? "已启用。只有应用实际使用 AirType 麦克风时才会收音。" : "已关闭。遥控器仍可发送快捷键；录音沿用应用自己的麦克风。")
-                        .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
-                    if sources.remoteEnabled {
-                        Divider()
+                    })).labelsHidden().toggleStyle(.switch).disabled(controller.voiceActionBusy)
+                }
+        ScrollViewReader { proxy in ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if !sources.remoteEnabled {
+                    Label("遥控器只发送快捷键，录音使用应用原来的麦克风。", systemImage: "keyboard")
+                        .font(.system(size: 13)).foregroundStyle(ConsoleTheme.secondary)
+                        .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(panelBackground(ConsoleTheme.surface, radius: 12))
+                }
+                if sources.remoteEnabled { VStack(alignment: .leading, spacing: 12) {
                         Toggle("MacBook 麦克风（旧 · Beta）", isOn: Binding(get: { sources.otherEnabled }, set: {
                             sources.otherEnabled = $0
                             sources.otherUID = AudioSourceSettings.builtInMicrophoneUID ?? "unavailable-built-in-microphone"
@@ -781,35 +805,24 @@ private struct AudioSourcesView: View {
                         .help("原项目的内置麦克风混音功能，尚未完成本机实测。默认关闭；Mac mini 无内置麦克风时自动跳过，不影响遥控器。")
                         Text("可选：将 MacBook 内置麦克风与遥控器混音。尚待实机验证；设备不可用时自动跳过。")
                             .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(panelBackground(ConsoleTheme.surface, radius: 12))
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(panelBackground(ConsoleTheme.surface, radius: 12)) }
                 if sources.remoteEnabled {
                     MicrophoneFollowView()
                     Divider().overlay(ConsoleTheme.lineSoft)
                     VoiceServicesView(model: model).id("actions")
                 }
-                DisclosureGroup("使用场景与系统设备说明", isExpanded: $showScenarios) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("只把遥控器当小键盘：关闭上面的麦克风开关，到「按键映射」设置普通快捷键。若录音应用仍选择 vRemoteDr 2ch，需将它改回实际麦克风。")
-                        Text("用键盘、鼠标或遥控器启动录音：在录音应用或系统输入中选择 vRemoteDr 2ch，再使用自动跟随；指定应用模式下需先添加该应用。Mac mini 没有其他麦克风时也适用。")
-                        Text("按遥控器直接开始听写：先在下方录制应用快捷键，再到「按键映射」绑定语音动作。Codex 动作需要先将 Codex 放到前台。")
-                        Text("vRemoteDr 2ch 是驱动提供的虚拟设备，两种开麦模式下都可能出现在系统输入和输出列表。录音时选它作输入；播放仍选你的扬声器或耳机。开关和应用名单控制收音，不隐藏设备，也不隔离其他应用的音频访问。")
-                    }.font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary).padding(.top, 8)
-                }
                 DeviceChecksView(model: model).id("checks")
                 if sources.remoteEnabled {
-                    DisclosureGroup("兼容选项（旧）") {
+                    HStack {
                         Toggle("保持音频通道开启（旧）", isOn: Binding(get: { !model.onDemandAudio }, set: { model.setOnDemandAudio(!$0) }))
-                            .help("原项目常驻音频通道的兼容行为。通常保持关闭；它不控制应用录音，也不改变播放设备。")
+                            .toggleStyle(.checkbox).font(.system(size: 12))
+                        InlineHelp(title: "音频兼容选项", text: "原项目常驻音频通道的兼容行为。通常保持关闭；仅在按需音频不稳定时尝试。它不控制应用录音，也不改变播放设备。")
+                        Spacer()
                     }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 16)
         }.onAppear {
             #if DEBUG
-            if CommandLine.arguments.contains("--review-scenarios") {
-                showScenarios = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("checks", anchor: .bottom) }
-            }
             if CommandLine.arguments.contains("--review-actions") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("actions", anchor: .top) }
             }
@@ -818,6 +831,7 @@ private struct AudioSourcesView: View {
             }
             #endif
         } }
+        }
     }
 }
 
@@ -897,16 +911,6 @@ private struct MicrophoneFollowView: View {
                     }
             }
             if let error = settings.error { Text(error).foregroundStyle(.orange) }
-            HStack {
-                Button(controller.paused ? "恢复 AirType 输入" : "暂停 AirType 输入") {
-                    if controller.paused { controller.resume() } else { controller.pause() }
-                }
-                Spacer()
-            }
-            Label(controller.message, systemImage: controller.eligible.isEmpty ? "mic.slash" : "mic.fill")
-                .font(.system(size: 12)).foregroundStyle(controller.displayTone == .error ? ConsoleTheme.red : controller.displayTone == .warning ? ConsoleTheme.amber : controller.displayTone == .active ? ConsoleTheme.green : ConsoleTheme.secondary)
-            Text("暂停只停止 AirType 送音，不会替应用结束录音。")
-                .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
         }.frame(maxWidth: .infinity, alignment: .leading)
 
     }
@@ -927,7 +931,7 @@ private struct VoiceServicesView: View {
                         .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
                 }
                 Spacer()
-                Button("添加语音动作…") { adding = true }
+                Button("添加语音动作…") { adding = true }.help("目前支持 4 种内置应用。其他应用可到项目 Issues 提建议或提交 PR。")
             }
             VStack(spacing: 12) {
                     ForEach(services.added) { service in
@@ -957,6 +961,10 @@ private struct VoiceServicesView: View {
                 ForEach(VoiceInputMethod.allCases.filter { !services.profile($0).added }) { service in
                     HStack { Text(service.title); Spacer(); Button("添加") { services.add(service); adding = false } }
                 }
+                Divider()
+                Text("目前内置支持 Typeless、Codex、豆包和微信输入法。其他应用可先通过自动跟随或指定应用使用麦克风；专用语音动作欢迎提交 PR 或在项目 Issues 联系维护者。")
+                    .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+                Link("提交建议 / PR ↗", destination: URL(string: "https://github.com/blueywu/airtype/issues")!)
                 Button("完成") { adding = false }
             }.padding(25).frame(width: 420).background(ConsoleTheme.panel)
         }
@@ -984,12 +992,88 @@ private struct VoiceServicesView: View {
     }
 }
 
+private struct UsageChartsView: View {
+    let records: [LocalUsageStore.Record]
+    @State private var period = 7
+    private let palette: [Color] = [.mint, .blue, .indigo, .orange, .pink, .gray]
+    private var summary: UsageSummary { UsageSummary(records: records, days: period) }
+    private var slices: [(name: String, count: Int)] {
+        let apps = summary.apps
+        let top = apps.prefix(5).map { (name: $0.name, count: $0.count) }
+        let rest = apps.dropFirst(5).reduce(0) { $0 + $1.count }
+        return top + (rest > 0 ? [(name: "其他", count: rest)] : [])
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("\(summary.count) 次").font(.system(size: 24, weight: .semibold)).monospacedDigit()
+                Text(String(format: "累计 %.1f 分钟", summary.minutes)).foregroundStyle(ConsoleTheme.secondary)
+                Spacer()
+                Picker("时间范围", selection: $period) {
+                    Text("近 7 天").tag(7); Text("近 30 天").tag(30)
+                }.labelsHidden().pickerStyle(.segmented).frame(width: 166)
+            }
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack { Text("使用时长").font(.system(size: 13, weight: .medium)); Spacer(); Text("分钟 / 天").font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary) }
+                    Text(String(format: "峰值 %.1f 分钟", summary.days.map(\.minutes).max() ?? 0)).font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+                    GeometryReader { geo in
+                        let maxValue = max(1, summary.days.map(\.minutes).max() ?? 0)
+                        ZStack {
+                            VStack { ForEach(0..<3) { _ in Rectangle().fill(ConsoleTheme.lineSoft).frame(height: 1); Spacer(minLength: 0) } }
+                            if summary.minutes > 0 {
+                                Path { path in
+                                    for (i, day) in summary.days.enumerated() {
+                                        let point = CGPoint(x: CGFloat(i) / CGFloat(max(1, summary.days.count - 1)) * geo.size.width,
+                                                            y: geo.size.height - CGFloat(day.minutes / maxValue) * (geo.size.height - 8))
+                                        if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+                                    }
+                                }.stroke(ConsoleTheme.green, style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+                            } else { Text("暂无已完成的时长记录").font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
+                        }
+                    }.frame(height: 91)
+                    HStack { Text(summary.days.first!.date.formatted(.dateTime.month().day())); Spacer(); Text("今天") }
+                        .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+                }.padding(16).frame(maxWidth: .infinity).background(panelBackground(ConsoleTheme.surface, radius: 14))
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("App 占比 · 按次数").font(.system(size: 13, weight: .medium))
+                    HStack(spacing: 16) {
+                        ZStack {
+                            Circle().stroke(ConsoleTheme.lineSoft, lineWidth: 15)
+                            ForEach(Array(slices.enumerated()), id: \.offset) { index, slice in
+                                let before = slices.prefix(index).reduce(0) { $0 + $1.count }
+                                Circle().trim(from: CGFloat(before) / CGFloat(max(1, summary.count)), to: CGFloat(before + slice.count) / CGFloat(max(1, summary.count)))
+                                    .stroke(palette[index], style: StrokeStyle(lineWidth: 15, lineCap: .butt)).rotationEffect(.degrees(-90))
+                            }
+                            Text(summary.count == 0 ? "暂无数据" : "\(summary.apps.count) 个 App")
+                                .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+                        }.frame(width: 100, height: 100).padding(8)
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(slices.enumerated()), id: \.offset) { index, slice in
+                                HStack(spacing: 5) {
+                                    Circle().fill(palette[index]).frame(width: 6, height: 6)
+                                    Text(slice.name).lineLimit(1)
+                                    Spacer(minLength: 3)
+                                    Text("\(Int((Double(slice.count) / Double(max(1, summary.count)) * 100).rounded()))%").monospacedDigit()
+                                }.font(.system(size: 10)).help("\(slice.name)：\(slice.count) 次")
+                            }
+                        }.frame(maxWidth: .infinity)
+                    }.frame(height: 105)
+                    Text("应用按实际麦克风使用者统计").font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+                }.padding(16).frame(maxWidth: .infinity).background(panelBackground(ConsoleTheme.surface, radius: 14))
+            }
+            Text("时长按会话开始日期汇总；包含预览与停顿，多个 App 的时长可能重叠。未确认或中断后未知的时长不计入。")
+                .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+        }.padding(.vertical, 4)
+    }
+}
+
 private struct LocalUsageView: View {
     @ObservedObject private var usage = LocalUsageStore.shared
     @State private var confirmClear = false
     @State private var exportMessage: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        ScrollView { VStack(alignment: .leading, spacing: 15) {
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("本地使用记录").font(.system(size: 20, weight: .semibold))
@@ -999,10 +1083,7 @@ private struct LocalUsageView: View {
                 Spacer()
                 Toggle("记录使用情况", isOn: Binding(get: { usage.enabled }, set: usage.setEnabled)).toggleStyle(.switch)
             }
-            Text("仅保存麦克风使用时间、时长、实际使用应用与结束状态。\n不保存录音、识别文字、窗口标题或网址；数据不上传。")
-                .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
-                .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                .background(panelBackground(ConsoleTheme.surface, radius: 14))
+            UsageChartsView(records: usage.records)
             HStack {
                 Text("最近记录（共 \(usage.records.count) 条）").font(.system(size: 13, weight: .semibold))
                 Spacer()
@@ -1046,6 +1127,7 @@ private struct LocalUsageView: View {
             if let exportMessage { Text(exportMessage).font(.system(size: 11)) }
             Text("新记录按实际使用麦克风的应用统计；包含预览和停顿，不代表文件录音或说话时长。")
                 .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+        }
         }
         .confirmationDialog("清空所有本地使用记录？", isPresented: $confirmClear) {
             Button("清空记录", role: .destructive) { usage.clear() }
@@ -2217,18 +2299,28 @@ enum P1UIReview {
         if scene == "guard" { model.voiceActionStatus = "请先将 Codex 窗口置于前台，再启动听写。" }
         if scene == "switch-failed" { model.voiceActionStatus = "音源未准备好，未发送听写快捷键。请检查遥控器连接与其他麦克风。" }
         if scene == "usage" {
-            let usage = LocalUsageStore.shared; usage.setEnabled(true)
-            let id = usage.begin(serviceName: "麦克风使用", source: "application", action: "inputDevice", application: .init(bundleID: "com.apple.VoiceMemos", name: "语音备忘录"))
-            usage.confirm(id); usage.finish(id, outcome: "completed")
-            let id2 = usage.begin(serviceName: "麦克风使用", source: "application", action: "inputDevice", application: .init(bundleID: "com.openai.codex", name: "Codex"))
-            usage.confirm(id2); usage.finish(id2, outcome: "completed")
+            let calendar = Calendar.current
+            var demo: [LocalUsageStore.Record] = []
+            let apps = [("com.openai.codex", "Codex"), ("com.apple.VoiceMemos", "语音备忘录"), ("now.typeless.desktop", "Typeless")]
+            for day in 0..<7 {
+                for index in 0..<(day % 3 + 1) {
+                    let start = calendar.date(byAdding: .day, value: -day, to: Date().addingTimeInterval(-3600))!
+                    let app = apps[(day + index) % apps.count]
+                    demo.append(.init(id: UUID(), attemptedAt: start, startedAt: start, endedAt: start.addingTimeInterval(120), duration: Double(120 + day * 40 + index * 60), service: "麦克风使用", source: "application", action: "inputDevice", application: .init(bundleID: app.0, name: app.1), outcome: "completed"))
+                }
+            }
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+            try? FileManager.default.createDirectory(at: AirTypeEnvironment.usageFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? encoder.encode(demo).write(to: AirTypeEnvironment.usageFile)
+            LocalUsageStore.shared.setEnabled(true)
         }
         app.setActivationPolicy(.regular)
         let view = StudioMixerView(model: model)
         let window = NSWindow(contentRect: NSRect(x: 200, y: 120, width: 820, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "AirType · UI 审查"
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: CommandLine.arguments.contains("--review-dark") ? .darkAqua : .aqua)
+        window.backgroundColor = .clear; window.isOpaque = false
         window.contentView = NSHostingView(rootView: view)
         window.makeKeyAndOrderFront(nil); app.activate(ignoringOtherApps: true)
         if CommandLine.arguments.contains("--review-app-picker") {
