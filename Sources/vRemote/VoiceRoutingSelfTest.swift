@@ -273,16 +273,21 @@ enum VoiceRoutingSelfTest {
         do {
             var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
             let now = Date(timeIntervalSince1970: 1_800_000_000)
-            func record(_ days: Int, _ seconds: Double?, _ confirmed: Bool = true) -> LocalUsageStore.Record {
+            func record(_ days: Int, _ seconds: Double?, _ confirmed: Bool = true, appID: String = "test.app") -> LocalUsageStore.Record {
                 let start = calendar.date(byAdding: .day, value: -days, to: now)!
-                return .init(id: UUID(), attemptedAt: start, startedAt: confirmed ? start : nil, endedAt: start, duration: seconds, service: "input", source: "application", action: "inputDevice", application: .init(bundleID: "test.app", name: "Test"), outcome: "completed")
+                return .init(id: UUID(), attemptedAt: start, startedAt: confirmed ? start : nil, endedAt: start, duration: seconds, service: "input", source: "application", action: "inputDevice", application: .init(bundleID: appID, name: appID == "test.app" ? "Test" : "Other"), outcome: "completed")
             }
             let data = [record(0, 120), record(6, 60), record(7, 600), record(0, 900, false), record(1, nil), record(-1, 500)]
             let week = UsageSummary(records: data, days: 7, now: now, calendar: calendar)
             check(week.count == 3 && week.days.count == 7, "charts include confirmed sessions within local seven-day window only")
             check(abs(week.minutes - 3) < 0.001, "charts exclude unconfirmed and unknown duration without inventing elapsed time")
-            check(week.apps.count == 1 && week.apps[0].count == 3, "app pie uses confirmed session count independently from known duration")
+            check(week.apps.count == 1 && week.apps[0].count == 3, "app summaries retain confirmed session counts independently from known duration")
             check(UsageSummary(records: data, days: 30, now: now, calendar: calendar).count == 4, "thirty-day chart includes earlier history and excludes future entries")
+            let other = record(0, 180, appID: "other.app")
+            let stacked = UsageSummary(records: data + [other, record(0, -60), record(0, .infinity)], days: 7, now: now, calendar: calendar)
+            check(abs(stacked.minutes - 6) < 0.001 && abs(stacked.apps.reduce(0) { $0 + $1.minutes } - stacked.minutes) < 0.001, "app time shares equal total known duration and exclude invalid values")
+            check(stacked.days.allSatisfy { abs($0.appMinutes.values.reduce(0, +) - $0.minutes) < 0.001 }, "daily stacked segments equal each daily total")
+            check(stacked.days.last?.appMinutes["other.app"] == 3 && stacked.days.last?.appMinutes["test.app"] == 2, "same-day concurrent applications retain separate stacked durations")
             let empty = UsageSummary(records: [], days: 7, now: now, calendar: calendar)
             check(empty.minutes == 0 && empty.apps.isEmpty && empty.count == 0, "empty charts show zero without fabricated demo history")
         }

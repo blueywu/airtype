@@ -210,9 +210,11 @@ private enum RemoteImageAsset {
 
 private enum ConsoleModal: Identifiable {
     case permission(PermissionKind)
+    case deviceChecks
 
     var id: String {
         switch self {
+        case .deviceChecks: "device-checks"
         case .permission(let kind): "permission-\(kind.id)"
         }
     }
@@ -559,6 +561,15 @@ private struct StudioMixerView: View {
         .controlSize(.regular)
         .sheet(item: $model.activeModal) { modal in
             switch modal {
+            case .deviceChecks:
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack {
+                        Text("设备与权限").font(.system(size: 20, weight: .semibold))
+                        Spacer()
+                        Button("完成") { model.activeModal = nil }
+                    }
+                    DeviceChecksView(model: model)
+                }.padding(24).frame(width: 620)
             case .permission(let kind):
                 PermissionGuideView(
                     kind: kind,
@@ -594,9 +605,14 @@ private struct StudioMixerView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(statusColor)
             }
-            if (sources.remoteEnabled && (!model.driverAvailable || !model.bluetoothGranted)) || !model.accessibilityGranted || !model.inputMonitoringGranted {
-                Button("检查设置") { model.selectedPage = .mixer }
-            }
+            Button { model.activeModal = .deviceChecks } label: {
+                Image(systemName: needsDeviceAttention ? "exclamationmark.shield" : "checkmark.shield")
+                    .font(.system(size: 16))
+                    .foregroundStyle(needsDeviceAttention ? ConsoleTheme.amber : ConsoleTheme.secondary)
+                    .frame(width: 28, height: 28)
+            }.buttonStyle(.plain)
+             .help(needsDeviceAttention ? "设备与权限：有项目需要检查" : "设备与权限：配置已就绪")
+             .accessibilityLabel(needsDeviceAttention ? "设备与权限，需要检查" : "设备与权限")
             Menu {
                 Picker("外观", selection: $appearance.selection) {
                     ForEach(AppAppearance.allCases) { mode in
@@ -604,14 +620,22 @@ private struct StudioMixerView: View {
                     }
                 }
             } label: {
-                Label(appearance.selection.title, systemImage: appearance.selection.symbol)
-                    .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
-            }.menuStyle(.borderlessButton).fixedSize()
+                Image(systemName: appearance.selection.symbol)
+                    .font(.system(size: 16)).foregroundStyle(ConsoleTheme.secondary)
+                    .frame(width: 28, height: 28)
+            }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
              .help("外观：跟随系统、浅色或深色。选择会保存在本机。")
              .accessibilityLabel("外观：" + appearance.selection.title)
 
         }
         .padding(.horizontal, 0)
+    }
+
+    private var needsDeviceAttention: Bool {
+        !model.accessibilityGranted || !model.inputMonitoringGranted || !model.bluetoothGranted ||
+        !model.hidConnected && !model.bleConnected ||
+        (sources.remoteEnabled && !model.driverAvailable) ||
+        (sources.remoteEnabled && sources.otherEnabled && !model.microphoneGranted)
     }
 
     private var statusText: String {
@@ -796,7 +820,7 @@ private struct AudioSourcesView: View {
         VStack(spacing: 16) {
                 HStack(spacing: 8) {
                     Text("语音设置").font(.system(size: 20, weight: .semibold))
-                    InlineHelp(title: "怎样使用遥控器收音？", text: "只当小键盘：关闭右侧开关。\n键盘或鼠标录音：开启后，将录音应用的输入选为 vRemoteDr 2ch；自动跟随或允许的指定应用都可使用。\n遥控器听写：配置下方语音动作，再到按键映射绑定。\nvRemoteDr 2ch 在系统输入和输出列表中均可能可见。仅将它用作录音输入，播放使用扬声器或耳机。关闭此开关不会隐藏设备；若应用仍选择它，请改回实际麦克风。")
+                    InlineHelp(title: "怎样使用遥控器收音？", text: "只当小键盘：关闭右侧开关。\n键盘或鼠标录音：开启后，将录音应用的输入选为 vRemoteDr 2ch；全局或允许的应用都可使用。\n遥控器听写：配置下方语音动作，再到按键映射绑定。\nvRemoteDr 2ch 在系统输入和输出列表中均可能可见。仅将它用作录音输入，播放使用扬声器或耳机。关闭此开关不会隐藏设备；若应用仍选择它，请改回实际麦克风。")
                     Spacer()
                     Text("遥控器麦克风").font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
                     Toggle("使用遥控器麦克风", isOn: Binding(get: { sources.remoteEnabled }, set: {
@@ -813,28 +837,30 @@ private struct AudioSourcesView: View {
                 }
                 if sources.remoteEnabled {
                     MicrophoneFollowView()
-                    Divider().overlay(ConsoleTheme.lineSoft)
                     VoiceServicesView(model: model).id("actions")
+                    ExtraMicrophoneApplicationsView()
                 }
-                DeviceChecksView(model: model).id("checks")
                 if sources.remoteEnabled {
-                    HStack {
-                        Toggle("保持音频通道开启（旧）", isOn: Binding(get: { !model.onDemandAudio }, set: { model.setOnDemandAudio(!$0) }))
-                            .toggleStyle(.checkbox).font(.system(size: 12))
-                        InlineHelp(title: "音频兼容选项", text: "原项目常驻音频通道的兼容行为。通常保持关闭；仅在按需音频不稳定时尝试。它不控制应用录音，也不改变播放设备。")
-                        Spacer()
-                    }
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Toggle("保持音频通道开启", isOn: Binding(get: { !model.onDemandAudio }, set: { model.setOnDemandAudio(!$0) }))
+                            InlineHelp(title: "保持音频通道开启", text: "通常保持关闭；仅在按需音频不稳定时尝试。它不控制应用录音，也不改变播放设备。")
+                            Spacer()
+                        }
+                        HStack {
+                            Toggle("MacBook 麦克风（Beta）", isOn: Binding(get: { sources.otherEnabled }, set: {
+                                sources.otherEnabled = $0
+                                sources.otherUID = AudioSourceSettings.builtInMicrophoneUID ?? "unavailable-built-in-microphone"
+                                model.onMacInputEnabledChanged?($0)
+                            }))
+                            InlineHelp(title: "MacBook 麦克风（Beta）", text: "可选内置麦克风混音，尚待实机验证。默认关闭；设备不可用时自动跳过。")
+                            Spacer()
+                        }
+                    }.toggleStyle(.checkbox).font(.system(size: 12))
+                     .disabled(controller.voiceActionBusy)
+                     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                     .background(panelBackground(ConsoleTheme.surface, radius: 12)).id("beta")
                 }
-                if sources.remoteEnabled { VStack(alignment: .leading, spacing: 12) {
-                        Toggle("MacBook 麦克风（旧 · Beta）", isOn: Binding(get: { sources.otherEnabled }, set: {
-                            sources.otherEnabled = $0
-                            sources.otherUID = AudioSourceSettings.builtInMicrophoneUID ?? "unavailable-built-in-microphone"
-                            model.onMacInputEnabledChanged?($0)
-                        })).disabled(controller.voiceActionBusy)
-                        .help("原项目的内置麦克风混音功能，尚未完成本机实测。默认关闭；Mac mini 无内置麦克风时自动跳过，不影响遥控器。")
-                        Text("可选：将 MacBook 内置麦克风与遥控器混音。尚待实机验证；设备不可用时自动跳过。")
-                            .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(panelBackground(ConsoleTheme.surface, radius: 12)).id("beta") }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 16)
         }.onAppear {
             #if DEBUG
@@ -845,7 +871,7 @@ private struct AudioSourcesView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("beta", anchor: .bottom) }
             }
             if CommandLine.arguments.contains("--review-checks") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("checks", anchor: .top) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { model.activeModal = .deviceChecks }
             }
             #endif
         } }
@@ -856,32 +882,18 @@ private struct AudioSourcesView: View {
 private struct DeviceChecksView: View {
     @ObservedObject var model: ConsoleViewModel
     @ObservedObject private var sources = AudioSourceSettings.shared
-    @State private var expanded = false
-    private var needsAttention: Bool {
-        (sources.remoteEnabled && !model.driverAvailable) || !model.accessibilityGranted || !model.inputMonitoringGranted ||
-        (sources.remoteEnabled && !model.bluetoothGranted) || (sources.otherEnabled && !model.microphoneGranted)
-    }
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(spacing: 4) {
+            VStack(spacing: 10) {
+                StatusRow(title: "遥控器", value: model.hidConnected || model.bleConnected ? "已连接" : "未连接，请检查蓝牙配对与设备电量", tone: model.hidConnected || model.bleConnected ? .good : .warning, action: "蓝牙设置", onAction: { model.openSettings(for: .bluetooth) })
                 if sources.remoteEnabled { StatusRow(title: "音频驱动", value: model.driverAvailable ? "vRemoteDr 2ch 可用" : "未检测到虚拟麦克风", tone: model.driverAvailable ? .good : .error, action: "声音设置", onAction: model.openSoundInputSettings) }
-                permission("蓝牙", granted: model.bluetoothGranted, required: sources.remoteEnabled, kind: .bluetooth, purpose: "遥控器连接")
+                permission("蓝牙", granted: model.bluetoothGranted, required: true, kind: .bluetooth, purpose: "遥控器连接")
                 permission("其他麦克风", granted: model.microphoneGranted, required: sources.remoteEnabled && sources.otherEnabled, kind: .microphone, purpose: "采集其他麦克风")
                 permission("辅助功能", granted: model.accessibilityGranted, required: true, kind: .accessibility, purpose: "发送按键动作")
                 permission("输入监控", granted: model.inputMonitoringGranted, required: true, kind: .inputMonitoring, purpose: "监听遥控器按键")
                 Text("驱动缺失时，需要安装或修复 AirType 音频驱动；声音设置仅用于检查设备。权限修改后如未生效，请重新打开 AirType。")
                     .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary).padding(.top, 8)
             }.padding(.top, 10)
-        } label: {
-            HStack {
-                Label("设备与权限", systemImage: "checklist").font(.system(size: 14, weight: .medium))
-                Spacer()
-                Text(needsAttention ? "有项目需要检查" : "配置已就绪").font(.system(size: 12)).foregroundStyle(needsAttention ? ConsoleTheme.amber : ConsoleTheme.secondary)
-            }
-        }
         .padding(16).background(panelBackground(ConsoleTheme.surface, radius: 12))
-        .onAppear { expanded = needsAttention }
-        .onChange(of: needsAttention) { value in if value { expanded = true } }
     }
     private func permission(_ title: String, granted: Bool, required: Bool, kind: PermissionKind, purpose: String) -> some View {
         StatusRow(title: title, value: granted ? "已授权 · " + purpose : (required ? "未授权 · " + purpose : "当前未启用，无需授权"), tone: granted || !required ? .good : .warning, action: granted || !required ? nil : "去设置", onAction: { model.activeModal = .permission(kind) })
@@ -893,44 +905,58 @@ private struct MicrophoneFollowView: View {
     @ObservedObject private var controller = MicrophoneFollowController.shared
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Text("开麦方式").font(.system(size: 14, weight: .medium))
+            Text("开麦范围").font(.system(size: 14, weight: .semibold))
             Text("以应用实际使用 AirType 麦克风为准；仅在系统中选中设备，不会持续开麦。")
                 .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
-            Picker("启用方式", selection: $settings.specified) {
-                Text("自动跟随").tag(false)
-                Text("指定应用").tag(true)
+            Picker("开麦范围", selection: $settings.specified) {
+                Text("全局").tag(false)
+                Text("语音动作及额外应用").tag(true)
             }.pickerStyle(.segmented)
             Text(settings.specified
-                ? "名单中的应用或已配置的语音动作使用 AirType 麦克风时开麦；键盘、鼠标触发也适用。"
+                ? "额外名单中的应用或已启用的语音动作应用使用 AirType 麦克风时开麦；键盘、鼠标触发也适用。"
                 : "任何应用开始使用 AirType 麦克风时，遥控器自动开麦；所有应用停止使用后关麦。")
                 .font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
-            if settings.specified {
-                HStack {
-                    Text("额外允许的应用").font(.headline)
-                    Spacer()
-                    Button("添加应用…") { settings.chooseApplications() }
-                    Button("系统应用…") { settings.chooseApplications(system: true) }
-                }
-                Text("已启用语音动作的应用会自动计入。也可添加其他录音应用；通过键盘或鼠标启动同样有效。")
-                    .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
-                VStack(spacing: 8) {
-                        if settings.applications.isEmpty { Text("尚未添加额外应用；已启用的语音动作应用仍可触发。").padding() }
-                        ForEach(settings.applications) { application in
-                            HStack {
-                                Image(nsImage: NSWorkspace.shared.icon(forFile: application.path)).resizable().frame(width: 28, height: 28)
-                                VStack(alignment: .leading) {
-                                    Text(application.name)
-                                    Text(application.path).font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary).lineLimit(1).help(application.path)
-                                }
-                                Spacer()
-                                Button("移除") { settings.remove(application.id) }
-                            }.padding(9).background(ConsoleTheme.surface).cornerRadius(9)
-                        }
-                    }
-            }
-            if let error = settings.error { Text(error).foregroundStyle(.orange) }
-        }.frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+         .background(panelBackground(ConsoleTheme.surface, radius: 12))
+    }
+}
 
+private struct ExtraMicrophoneApplicationsView: View {
+    @ObservedObject private var settings = MicrophoneFollowSettings.shared
+    @ObservedObject private var services = VoiceServiceStore.shared
+    private var extraApplications: [MicrophoneApplication] {
+        settings.applications.filter { application in
+            !services.available.contains { $0.matchesAudioBundle(application.id) }
+        }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("额外允许的应用").font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button("添加应用…") { settings.chooseApplications() }
+                Button("系统应用…") { settings.chooseApplications(system: true) }
+            }
+            Text("已启用的语音动作应用自动允许，无需重复添加。这里仅补充语音动作之外的录音应用。")
+                .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+            if !settings.specified {
+                Text("当前为全局模式，所有应用均可触发开麦；此名单在切换为「语音动作及额外应用」后生效。")
+                    .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+            }
+            ForEach(extraApplications) { application in
+                HStack(spacing: 10) {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: application.path)).resizable().frame(width: 24, height: 24)
+                    Text(application.name).font(.system(size: 13)).help(application.path)
+                    Spacer()
+                    Button("移除") { settings.remove(application.id) }
+                }
+            }
+            if extraApplications.isEmpty {
+                Text("尚未添加额外应用").font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+            }
+            if let error = settings.error { Text(error).font(.system(size: 12)).foregroundStyle(.orange) }
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+         .background(panelBackground(ConsoleTheme.surface, radius: 12))
     }
 }
 
@@ -944,7 +970,7 @@ private struct VoiceServicesView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("语音动作").font(.system(size: 14, weight: .medium))
+                    Text("语音动作").font(.system(size: 14, weight: .semibold))
                     Text("为应用录制听写快捷键，再将它绑定到遥控器按键。")
                         .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
                 }
@@ -980,7 +1006,7 @@ private struct VoiceServicesView: View {
                     HStack { Text(service.title); Spacer(); Button("添加") { services.add(service); adding = false } }
                 }
                 Divider()
-                Text("目前内置支持 Typeless、Codex、豆包和微信输入法。其他应用可先通过自动跟随或指定应用使用麦克风；专用语音动作欢迎提交 PR 或在项目 Issues 联系维护者。")
+                Text("目前内置支持 Typeless、Codex、豆包和微信输入法。其他应用可先通过全局或语音动作及额外应用模式使用麦克风；专用语音动作欢迎提交 PR 或在项目 Issues 联系维护者。")
                     .font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
                 Link("提交建议 / PR ↗", destination: URL(string: "https://github.com/blueywu/airtype/issues")!)
                 Button("完成") { adding = false }
@@ -996,7 +1022,7 @@ private struct VoiceServicesView: View {
     private func serviceRow(_ service: VoiceInputMethod) -> some View {
         let profile = services.profile(service)
         return HStack(spacing: 14) {
-            Toggle(service == .doubao || service == .wetype ? service.title + "（旧）" : service.title, isOn: Binding(get: { services.profile(service).enabled }, set: { _ = services.setEnabled($0, for: service) }))
+            Toggle(service.title, isOn: Binding(get: { services.profile(service).enabled }, set: { _ = services.setEnabled($0, for: service) }))
                 .toggleStyle(.checkbox).font(.system(size: 14, weight: .medium)).frame(width: 160, alignment: .leading)
             VStack(alignment: .leading, spacing: 6) {
                 Text(profile.shortcut?.label ?? "尚未配置快捷键").font(.system(size: 13, weight: .medium)).lineLimit(2).help(profile.shortcut?.label ?? "请先录制快捷键")
@@ -1015,74 +1041,152 @@ private struct UsageChartsView: View {
     @State private var period = 7
     private let palette: [Color] = [.mint, .blue, .indigo, .orange, .pink, .gray]
     private var summary: UsageSummary { UsageSummary(records: records, days: period) }
-    private var slices: [(name: String, count: Int)] {
-        let apps = summary.apps
-        let top = apps.prefix(5).map { (name: $0.name, count: $0.count) }
-        let rest = apps.dropFirst(5).reduce(0) { $0 + $1.count }
-        return top + (rest > 0 ? [(name: "其他", count: rest)] : [])
+    private struct Series: Identifiable {
+        var id: String
+        var name: String
+        var appIDs: [String]
+        var minutes: Double
+        var color: Color
+        func minutes(on day: UsageSummary.Day) -> Double {
+            appIDs.reduce(0) { $0 + (day.appMinutes[$1] ?? 0) }
+        }
+    }
+    private var series: [Series] {
+        let apps = summary.apps.filter { $0.minutes > 0 }
+        var values = apps.prefix(5).enumerated().map { index, app in
+            Series(id: app.id, name: app.name, appIDs: [app.id], minutes: app.minutes, color: palette[index])
+        }
+        let rest = apps.dropFirst(5)
+        if !rest.isEmpty {
+            values.append(Series(id: "other-apps", name: "其他应用", appIDs: rest.map(\.id), minutes: rest.reduce(0) { $0 + $1.minutes }, color: palette[5]))
+        }
+        return values
+    }
+    private func duration(_ minutes: Double) -> String {
+        let seconds = Int((minutes * 60).rounded())
+        if seconds < 60 { return "\(seconds) 秒" }
+        if seconds < 3600 { return "\(seconds / 60) 分 \(seconds % 60) 秒" }
+        return "\(seconds / 3600) 小时 \(seconds % 3600 / 60) 分"
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("\(summary.count) 次").font(.system(size: 24, weight: .semibold)).monospacedDigit()
-                Text(String(format: "累计 %.1f 分钟", summary.minutes)).foregroundStyle(ConsoleTheme.secondary)
+        let data = summary
+        let groups = series
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("累计使用时长").font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+                    Text(duration(data.minutes)).font(.system(size: 27, weight: .semibold)).monospacedDigit()
+                }
+                Text("\(data.count) 次使用").font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary).padding(.leading, 12)
                 Spacer()
                 Picker("时间范围", selection: $period) {
                     Text("近 7 天").tag(7); Text("近 30 天").tag(30)
                 }.labelsHidden().pickerStyle(.segmented).frame(width: 166)
             }
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack { Text("使用时长").font(.system(size: 13, weight: .medium)); Spacer(); Text("分钟 / 天").font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary) }
-                    Text(String(format: "峰值 %.1f 分钟", summary.days.map(\.minutes).max() ?? 0)).font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
-                    GeometryReader { geo in
-                        let maxValue = max(1, summary.days.map(\.minutes).max() ?? 0)
-                        ZStack {
-                            VStack { ForEach(0..<3) { _ in Rectangle().fill(ConsoleTheme.lineSoft).frame(height: 1); Spacer(minLength: 0) } }
-                            if summary.minutes > 0 {
-                                Path { path in
-                                    for (i, day) in summary.days.enumerated() {
-                                        let point = CGPoint(x: CGFloat(i) / CGFloat(max(1, summary.days.count - 1)) * geo.size.width,
-                                                            y: geo.size.height - CGFloat(day.minutes / maxValue) * (geo.size.height - 8))
-                                        if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
-                                    }
-                                }.stroke(ConsoleTheme.green, style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
-                            } else { Text("暂无已完成的时长记录").font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("每日使用时长").font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    Text("按应用堆叠 · 分钟").font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+                }
+                dailyChart(data, groups: groups)
+                if !groups.isEmpty {
+                    HStack(spacing: 14) {
+                        ForEach(groups) { group in
+                            HStack(spacing: 5) {
+                                Circle().fill(group.color).frame(width: 7, height: 7)
+                                Text(group.name).lineLimit(1).help(group.name)
+                            }.font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
                         }
-                    }.frame(height: 91)
-                    HStack { Text(summary.days.first!.date.formatted(.dateTime.month().day())); Spacer(); Text("今天") }
-                        .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
-                }.padding(16).frame(maxWidth: .infinity).background(panelBackground(ConsoleTheme.surface, radius: 14))
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("App 占比 · 按次数").font(.system(size: 13, weight: .medium))
-                    HStack(spacing: 16) {
-                        ZStack {
-                            Circle().stroke(ConsoleTheme.lineSoft, lineWidth: 15)
-                            ForEach(Array(slices.enumerated()), id: \.offset) { index, slice in
-                                let before = slices.prefix(index).reduce(0) { $0 + $1.count }
-                                Circle().trim(from: CGFloat(before) / CGFloat(max(1, summary.count)), to: CGFloat(before + slice.count) / CGFloat(max(1, summary.count)))
-                                    .stroke(palette[index], style: StrokeStyle(lineWidth: 15, lineCap: .butt)).rotationEffect(.degrees(-90))
+                    }
+                }
+            }.padding(18).background(panelBackground(ConsoleTheme.surface, radius: 14))
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("应用使用时长").font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    Text("累计时长 / 时长占比").font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
+                }
+                if groups.isEmpty {
+                    Text("暂无可统计的使用时长").font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary).padding(.vertical, 14)
+                }
+                ForEach(groups) { group in
+                    HStack(spacing: 14) {
+                        HStack(spacing: 7) {
+                            Circle().fill(group.color).frame(width: 7, height: 7)
+                            Text(group.name).lineLimit(1).help(group.name)
+                        }.frame(width: 150, alignment: .leading)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(ConsoleTheme.lineSoft)
+                                Capsule().fill(group.color).frame(width: max(2, geo.size.width * group.minutes / max(data.minutes, 0.001)))
                             }
-                            Text(summary.count == 0 ? "暂无数据" : "\(summary.apps.count) 个 App")
-                                .font(.system(size: 11)).foregroundStyle(ConsoleTheme.secondary)
-                        }.frame(width: 100, height: 100).padding(8)
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(Array(slices.enumerated()), id: \.offset) { index, slice in
-                                HStack(spacing: 5) {
-                                    Circle().fill(palette[index]).frame(width: 6, height: 6)
-                                    Text(slice.name).lineLimit(1)
-                                    Spacer(minLength: 3)
-                                    Text("\(Int((Double(slice.count) / Double(max(1, summary.count)) * 100).rounded()))%").monospacedDigit()
-                                }.font(.system(size: 10)).help("\(slice.name)：\(slice.count) 次")
-                            }
-                        }.frame(maxWidth: .infinity)
-                    }.frame(height: 105)
-                    Text("应用按实际麦克风使用者统计").font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
-                }.padding(16).frame(maxWidth: .infinity).background(panelBackground(ConsoleTheme.surface, radius: 14))
-            }
-            Text("时长按会话开始日期汇总；包含预览与停顿，多个 App 的时长可能重叠。未确认或中断后未知的时长不计入。")
+                        }.frame(height: 7)
+                        Text(duration(group.minutes)).monospacedDigit().frame(width: 110, alignment: .trailing)
+                        Text(String(format: "%.1f%%", group.minutes / max(data.minutes, 0.001) * 100))
+                            .monospacedDigit().foregroundStyle(ConsoleTheme.secondary).frame(width: 55, alignment: .trailing)
+                    }.font(.system(size: 12))
+                }
+            }.padding(18).background(panelBackground(ConsoleTheme.surface, radius: 14))
+            Text("时长包含预览与停顿；同时使用的应用分别累计，不等于实际经过时间。按会话开始日期归入当天，未知时长不计入。")
                 .font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
         }.padding(.vertical, 4)
+    }
+    private func dailyChart(_ data: UsageSummary, groups: [Series]) -> some View {
+        let peak = max(1, ceil(data.days.map(\.minutes).max() ?? 0))
+        return HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .trailing) {
+                Text(String(format: "%.0f", peak))
+                Spacer()
+                Text(String(format: "%.1f", peak / 2))
+                Spacer()
+                Text("0")
+            }.font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary).frame(width: 32, height: 140)
+            VStack(spacing: 8) {
+                GeometryReader { geo in
+                    ZStack(alignment: .bottom) {
+                        VStack {
+                            Rectangle().fill(ConsoleTheme.lineSoft).frame(height: 1)
+                            Spacer()
+                            Rectangle().fill(ConsoleTheme.lineSoft).frame(height: 1)
+                            Spacer()
+                            Rectangle().fill(ConsoleTheme.lineSoft).frame(height: 1)
+                        }
+                        HStack(alignment: .bottom, spacing: period == 7 ? 16 : 5) {
+                            ForEach(data.days) { day in
+                                VStack(spacing: 0) {
+                                    Spacer(minLength: 0)
+                                    VStack(spacing: 0) {
+                                        ForEach(groups.reversed()) { group in
+                                            Rectangle().fill(group.color)
+                                                .frame(height: geo.size.height * group.minutes(on: day) / peak)
+                                        }
+                                    }.clipShape(RoundedRectangle(cornerRadius: 3))
+                                }.frame(maxWidth: .infinity).contentShape(Rectangle())
+                                 .help(day.date.formatted(date: .abbreviated, time: .omitted) + " · " + duration(day.minutes) + "\n" + groups.filter { $0.minutes(on: day) > 0 }.map { $0.name + "：" + duration($0.minutes(on: day)) }.joined(separator: "\n"))
+                            }
+                        }.padding(.horizontal, period == 7 ? 16 : 3)
+                        if data.minutes == 0 {
+                            Text("暂无已完成的时长记录").font(.system(size: 12)).foregroundStyle(ConsoleTheme.secondary)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    }
+                }.frame(height: 140)
+                HStack {
+                    if period == 7 {
+                        ForEach(data.days) { day in
+                            Text(day.date.formatted(.dateTime.month().day())).frame(maxWidth: .infinity)
+                        }
+                    } else {
+                        Text(data.days.first!.date.formatted(.dateTime.month().day()))
+                        Spacer()
+                        Text(data.days[data.days.count / 2].date.formatted(.dateTime.month().day()))
+                        Spacer()
+                        Text("今天")
+                    }
+                }.font(.system(size: 10)).foregroundStyle(ConsoleTheme.secondary)
+            }
+        }
     }
 }
 

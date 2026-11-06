@@ -6,12 +6,14 @@ struct UsageSummary {
     struct Day: Identifiable {
         var date: Date
         var minutes: Double
+        var appMinutes: [String: Double]
         var id: Date { date }
     }
     struct App: Identifiable {
         var id: String
         var name: String
         var count: Int
+        var minutes: Double
     }
     var days: [Day]
     var apps: [App]
@@ -28,12 +30,16 @@ struct UsageSummary {
         count = included.count
         days = (0..<max(1, number)).map { offset in
             let date = calendar.date(byAdding: .day, value: offset, to: start)!
-            let minutes = included.filter { calendar.isDate($0.startedAt!, inSameDayAs: date) }
-                .compactMap(\.duration).filter { $0.isFinite && $0 >= 0 }.reduce(0, +) / 60
-            return Day(date: date, minutes: minutes)
+            let dayRecords = included.filter { calendar.isDate($0.startedAt!, inSameDayAs: date) }
+            let appMinutes = Dictionary(grouping: dayRecords, by: { $0.application.bundleID })
+                .mapValues { Self.knownMinutes($0) }
+            return Day(date: date, minutes: appMinutes.values.reduce(0, +), appMinutes: appMinutes)
         }
         apps = Dictionary(grouping: included, by: { $0.application.bundleID }).map { id, records in
-            App(id: id, name: records.last!.application.name, count: records.count)
-        }.sorted { $0.count == $1.count ? $0.id < $1.id : $0.count > $1.count }
+            App(id: id, name: records.last!.application.name, count: records.count, minutes: Self.knownMinutes(records))
+        }.sorted { $0.minutes == $1.minutes ? $0.id < $1.id : $0.minutes > $1.minutes }
+    }
+    private static func knownMinutes(_ records: [LocalUsageStore.Record]) -> Double {
+        records.compactMap(\.duration).filter { $0.isFinite && $0 >= 0 }.reduce(0, +) / 60
     }
 }
