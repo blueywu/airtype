@@ -1,6 +1,6 @@
 # AirType
 
-首先感谢 [VincentKingHsu](https://github.com/VincentKingHsu/vRemoter) 和 [ccc333cn](https://github.com/ccc333cn/vRemoter) 两位作者。AirType 在他们的 vRemoter 工作基础上继续开发，遥控器协议、音频桥接与相关修复都离不开他们的贡献。
+首先感谢原作者 [VincentKingHsu](https://github.com/VincentKingHsu/vRemoter) 创建 vRemoter。AirType 基于 [ccc333cn](https://github.com/ccc333cn/vRemoter) 的 PR 分支继续开发，也感谢他对原项目的改进。
 
 把蓝牙遥控器变成 Mac 上的小键盘，也可以把它当作麦克风。
 
@@ -125,7 +125,7 @@ swift build
 
 ## 来源与许可
 
-AirType 基于 [VincentKingHsu/vRemoter](https://github.com/VincentKingHsu/vRemoter) 及 [ccc333cn/vRemoter](https://github.com/ccc333cn/vRemoter) 的修改版本继续开发，保留遥控器协议、音频驱动接入及相关修复，并重组了本地使用流程。
+AirType 源自 [VincentKingHsu/vRemoter](https://github.com/VincentKingHsu/vRemoter)，以 [ccc333cn 的 PR 分支](https://github.com/ccc333cn/vRemoter) 为基础继续开发，保留遥控器协议、音频驱动接入及相关修复，并重组了使用流程。
 
 应用源码沿用 [MIT License](LICENSE)，原版权声明保留。音频驱动基于 BlackHole，使用独立的 GPL v3 许可证；驱动构建方式及来源见 [驱动说明](Driver/README.md) 和 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
