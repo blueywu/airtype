@@ -119,6 +119,8 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
     case volumeDown
     case mute
     case playPause
+    case previousTrack
+    case nextTrack
     case showDesktop
     case spotlight
     case commandC
@@ -153,6 +155,8 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
         case .volumeDown: L10n.text("系统音量－", "System Volume Down")
         case .mute: L10n.text("系统静音", "System Mute")
         case .playPause: L10n.text("播放/暂停", "Play / Pause")
+        case .previousTrack: L10n.text("上一首", "Previous Track")
+        case .nextTrack: L10n.text("下一首", "Next Track")
         case .showDesktop: L10n.text("显示桌面", "Show Desktop")
         case .spotlight: "Spotlight (⌘Space)"
         case .commandC: L10n.text("复制 (⌘C)", "Copy (⌘C)")
@@ -211,6 +215,9 @@ enum RemoteMappingTarget: String, CaseIterable, Identifiable, Codable, Hashable 
         case .volumeDown: 1
         case .mute: 7
         case .playPause: 16
+        // A short press of the Mac media rewind/fast-forward keys skips tracks.
+        case .previousTrack: 20 // NX_KEYTYPE_REWIND
+        case .nextTrack: 19 // NX_KEYTYPE_FAST
         default: nil
         }
     }
